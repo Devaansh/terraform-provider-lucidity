@@ -25,7 +25,7 @@ brew install node
  npm install -g @anthropic-ai/claude-code
  ```
 
-### Setup VS Code extensions:
+### Setup Visula Studio Code extensions:
 
 - Go — ID: `golang.go` (publisher: Go Team at Google)
 - HashiCorp Terraform — ID: `hashicorp.terraform` (publisher: HashiCorp)
