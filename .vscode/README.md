@@ -1,6 +1,6 @@
 
 
-Settup on mac laptop connected to large screen.
+Setup on mac laptop connected to large screen.
 
 
 
