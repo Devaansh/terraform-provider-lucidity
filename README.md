@@ -17,6 +17,14 @@ brew install hashicorp/tap/terraform
 brew install git
 ```
 
+```
+brew install node
+```
+
+```
+ npm install -g @anthropic-ai/claude-code
+ ```
+
 ### Setup VS Code extensions:
 
 - Go — ID: `golang.go` (publisher: Go Team at Google)
