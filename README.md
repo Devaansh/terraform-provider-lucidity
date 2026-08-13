@@ -26,3 +26,4 @@ HashiCorp HCL — ID: hashicorp.hcl
 GitLens — ID: eamodio.gitlens
 GitDoc — ID: vsls-contrib.gitdoc (publisher: Jonathan Carter / vsls-contrib)
 
+ 
