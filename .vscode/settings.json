@@ -1,5 +1,4 @@
 {
     "gitdoc.enabled": true,
-    "gitdoc.autoCommitDelay": 0,
-    "gitdoc.commitOnFileSave": true
+    "gitdoc.autoCommitDelay": 0
 }
