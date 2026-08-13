@@ -25,3 +25,10 @@ brew install git
 - GitLens — ID: `eamodio.gitlens`
 - GitDoc — ID: `vsls-contrib.gitdoc` (publisher: Jonathan Carter / vsls-contrib)
 
+.vscode settings.json
+```
+{
+    "gitdoc.enabled": true,
+    "gitdoc.autoCommitDelay": 0
+}
+```
