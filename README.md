@@ -1,3 +1,6 @@
+
+Project setup:
+
 Setup on mac laptop connected to large screen.
 
 ```
