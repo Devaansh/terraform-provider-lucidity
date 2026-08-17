@@ -42,4 +42,4 @@ brew install node
     "gitdoc.enabled": true,
     "gitdoc.autoCommitDelay": 0
 }
-```
+``` 
