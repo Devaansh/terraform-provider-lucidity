@@ -21,6 +21,13 @@ Build ONLY the auth layer now. Tenant resource/data source come in Phase 2,
 after Lucidity releases two new display-name update APIs (~1 week away).
 Phase 1 definition of done:
 - `terraform plan` with an empty config + provider block succeeds against sandbox.
+  **Caveat (discovered 2026-08-21):** Terraform prunes a provider from the
+  plan graph when nothing references it, so with zero resources/data sources
+  this never actually calls `ValidateProviderConfig`/`ConfigureProvider` —
+  it would "succeed" even with broken auth wiring. Real coverage of
+  `ConfigValidators`/`Configure` comes from driving the `tfprotov6.ProviderServer`
+  RPCs directly in `internal/provider/provider_test.go`, not from this check.
+  This gap closes naturally once Phase 2 adds a resource/data source.
 - Gated smoke test (`TF_ACC=1`) performs one authenticated `GET /external/client/api/v1/tenants`.
 - CI green (build + unit tests on PR).
 
@@ -50,23 +57,51 @@ Phase 1 definition of done:
 4. Provider config block:
    ```hcl
    provider "lucidity" {
-     refresh_token         = "…"  # Sensitive; falls back to LUCIDITY_REFRESH_TOKEN env var
+     refresh_token         = "…"  # Sensitive, discouraged (ends up in .tf/state)
+     refresh_token_file    = "…"  # Path to a file containing only the token
+     refresh_token_command = "…"  # Shell command; trimmed stdout is used as the token
      base_url              = "…"  # optional, default https://dash-back.lucidity.dev
      max_parallel_requests = 10   # optional
      account_name          = "…"  # optional; reserved for Phase 2 update APIs
    }
    ```
-   Attribute wins over env var. Validate at configure time: missing token →
-   helpful error naming both attribute and env var; malformed base_url caught
-   before any API call. Base URLs vary by deployment (5 known, see Getting
-   Started PDF) — never hardcode beyond the default.
+   **Token-source precedence (locked 2026-08-20):** exactly one of
+   `refresh_token` / `refresh_token_file` / `refresh_token_command` may be set.
+   A `ConfigValidator` MUST hard-error at validate time if more than one is
+   set, naming all attributes that were set. If none of the three are set,
+   fall back to the `LUCIDITY_REFRESH_TOKEN` env var. If nothing resolves a
+   token at all, error naming all three attributes and the env var.
+
+   - `refresh_token_file`: read the file, trim trailing whitespace/newline.
+     Missing/unreadable file → error naming the path (never its contents).
+   - `refresh_token_command`: run via `sh -c` (unix) / `cmd /C` (windows) so
+     pipelines and env expansion work as users expect (mirrors AWS CLI's
+     `credential_process` / kubectl exec-auth pattern). Trim trailing
+     whitespace/newline from stdout. Enforce a 30s timeout. Non-zero exit →
+     surface stderr in the diagnostic. Never log stdout (it's the secret) —
+     same scrubbing rule as access/refresh tokens elsewhere.
+   - Malformed `base_url` caught before any API call. Base URLs vary by
+     deployment (5 known, see Getting Started PDF) — never hardcode beyond
+     the default.
+
+   Rationale: rather than the provider baking in bespoke Vault/AWS-SM/
+   Azure-KV/GCP-SM client integrations (real maintenance surface for a
+   community provider), `refresh_token_command` is one generic escape hatch —
+   docs show recipes like `vault kv get -field=token secret/lucidity` per
+   backend. Fetching a secret via a Terraform *data source* and feeding it
+   into `refresh_token` still works, but the docs must call out that the
+   fetched value then lands in state as that data source's attribute (only
+   as safe as your state encryption).
 5. Unit tests against a local mock server replaying recorded envelope responses:
    token refresh, proactive renewal, single-flight, 401-retry, expired refresh
-   token message, scrubbing.
-6. Provider index docs covering all credential-supply options:
-   env var (CI default), AWS Secrets Manager / Azure Key Vault / GCP Secret
-   Manager data sources (with state-encryption caveat), Vault, tfvars
-   (discouraged, local only). Hardcoding in .tf: documented as never-do.
+   token message, scrubbing (must cover `refresh_token_command` stdout too).
+   Plus: multiple-sources-set → validator error; file read failure; command
+   non-zero exit; command timeout.
+6. Provider index docs covering all credential-supply options: env var (CI
+   default), `refresh_token_file`, `refresh_token_command` (with per-backend
+   recipes for Vault/AWS SM/Azure KV/GCP SM), data-source-fed `refresh_token`
+   (with state-encryption caveat), tfvars (discouraged, local only).
+   Hardcoding in .tf: documented as never-do.
 
 ### Required error message (401 / expired refresh token)
 
