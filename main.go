@@ -21,7 +21,6 @@ func main() {
 	flag.Parse()
 
 	opts := providerserver.ServeOpts{
-		// TODO: update to the final registry namespace before publishing.
 		Address: "registry.terraform.io/Devaansh/lucidity",
 		Debug:   debug,
 	}

@@ -59,13 +59,14 @@ Repo → Settings → Secrets and variables → Actions:
 
 `GITHUB_TOKEN` is provided automatically by Actions — no setup needed.
 
-### 4. Confirm `go.mod`'s module path matches the publishing repo
+### 4. Module path
 
-`go.mod`'s module path was set to `github.com/Devaansh/terraform-provider-lucidity`
-as a placeholder. Before the first release, confirm this matches the actual
-GitHub repo the provider is published from (per CLAUDE.md: "community
-provider from the maintainer's personal GitHub repo") — if it needs to
-change, update `go.mod` and the `Address` in `main.go` together.
+`go.mod`'s module path (`github.com/Devaansh/terraform-provider-lucidity`)
+matches the repo this provider is published from (renamed 2026-08-22 for
+exactly this reason — the Terraform Registry requires the repo itself to be
+named `terraform-provider-<name>` with the module at its root). If the repo
+is ever renamed or transferred again, update `go.mod` and the `Address` in
+`main.go` together.
 
 ## Cutting a release
 
