@@ -6,8 +6,10 @@ See [CLAUDE.md](CLAUDE.md) for the full design record and phase plan.
 - `docs/api/` — Lucidity API reference PDFs (source of truth)
 - `docs/lucidity-oidc-proposal.md` — OIDC proposal for the Lucidity team
 - `examples/complete/` — target end-user configuration pattern (Phase 2)
-- `sample-code/` — a runnable sample config that pulls this provider from the
-  Terraform Registry (not a local build)
+
+This repo holds provider source only — no sample/testing Terraform configs.
+Published at `registry.terraform.io/Devaansh/lucidity`; pull it from there to
+try it out.
 
 ## Local development setup
 
