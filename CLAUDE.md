@@ -60,7 +60,7 @@ Phase 1 definition of done:
      refresh_token         = "…"  # Sensitive, discouraged (ends up in .tf/state)
      refresh_token_file    = "…"  # Path to a file containing only the token
      refresh_token_command = "…"  # Shell command; trimmed stdout is used as the token
-     base_url              = "…"  # optional, default https://dash-back.lucidity.dev
+     dashboard_login_url   = "…"  # REQUIRED, no default — must be one of the 5 known values below
      max_parallel_requests = 10   # optional
      account_name          = "…"  # optional; reserved for Phase 2 update APIs
    }
@@ -80,9 +80,28 @@ Phase 1 definition of done:
      whitespace/newline from stdout. Enforce a 30s timeout. Non-zero exit →
      surface stderr in the diagnostic. Never log stdout (it's the secret) —
      same scrubbing rule as access/refresh tokens elsewhere.
-   - Malformed `base_url` caught before any API call. Base URLs vary by
-     deployment (5 known, see Getting Started PDF) — never hardcode beyond
-     the default.
+   - `dashboard_login_url` (locked 2026-09-03): **required, no default.**
+     Replaces the old optional/free-form `base_url` entirely — the maintainer
+     chose a closed, validated set over a string the user could mistype into
+     a working-looking but wrong host. A `stringvalidator.OneOf` rejects
+     anything outside the table below at validate time, before Configure
+     ever runs; a missing value is also a validate-time error (Required, no
+     default). The Dashboard Login URL → API Base URL mapping is defined in
+     the provider itself (`internal/provider/deployment.go`), not read from
+     user input:
+
+     | Dashboard Login URL | API Base URL |
+     |---|---|
+     | `https://www.web.lucidity.dev/dashboard` | `https://dash-back.lucidity.dev` |
+     | `https://web-azurepls.lucidity.cloud/dashboard` | `https://dashboard-azurepls.lucidity.cloud` |
+     | `https://app.lucidity.cloud` | `https://app.lucidity.cloud` |
+     | `https://in.app.lucidity.cloud` | `https://in.app.lucidity.cloud` |
+     | `https://eu.app.lucidity.cloud` | `https://eu.app.lucidity.cloud` |
+
+     Deliberate accepted trade-off: no free-form override attribute remains.
+     A customer on a deployment not yet in this table can't configure the
+     provider until a new release adds it — the maintainer chose closed
+     validation over that escape hatch.
 
    Rationale: rather than the provider baking in bespoke Vault/AWS-SM/
    Azure-KV/GCP-SM client integrations (real maintenance surface for a
