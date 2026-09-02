@@ -115,7 +115,9 @@ Phase 1 definition of done:
    token refresh, proactive renewal, single-flight, 401-retry, expired refresh
    token message, scrubbing (must cover `refresh_token_command` stdout too).
    Plus: multiple-sources-set → validator error; file read failure; command
-   non-zero exit; command timeout.
+   non-zero exit; command timeout; every `dashboard_login_url` in the table
+   maps to its correct `base_url`; an unrecognized or missing
+   `dashboard_login_url` is a validate-time error.
 6. Provider index docs covering all credential-supply options: env var (CI
    default), `refresh_token_file`, `refresh_token_command` (with per-backend
    recipes for Vault/AWS SM/Azure KV/GCP SM), data-source-fed `refresh_token`
