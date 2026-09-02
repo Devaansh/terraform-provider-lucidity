@@ -116,7 +116,7 @@ Everything below is decided; implement when the maintainer says Phase 2 starts.
 ### `lucidity_tenant` resource
 
 - One resource per cloud account. Users group accounts by environment in
-  locals and use for_each keyed by account_id (see examples/complete/).
+  locals and use for_each keyed by account_id (see docs/examples/lucidity-tenants.tf).
 - Computed attributes: `tenant_id`, `status`.
 - Immutable (RequiresReplace, gated by protection below): `cloud_provider`,
   `cloud_provider_account_id`.
@@ -217,3 +217,9 @@ the "desired vs actual" output pattern (Output 3 in planning).
 - Diagnostics are actionable: name the attribute/env var/next step, include
   requestId on API failures.
 - Generate docs with tfplugindocs from schema descriptions + examples/.
+  Note: the repo has no `examples/` directory right now — it was removed
+  along with the Phase-2-only reference config (moved to
+  `docs/examples/lucidity-tenants.tf`, plain documentation, not wired into
+  any tooling). tfplugindocs' own convention (`examples/resources/<name>/resource.tf`,
+  etc.) needs a real `examples/` directory recreated once Phase 2 adds
+  `lucidity_tenant` — this note exists so that doesn't get missed.
