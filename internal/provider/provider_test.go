@@ -87,7 +87,8 @@ func TestProviderRPC_ValidateConfig_RejectsConflictingTokenSources(t *testing.T)
 func TestProviderRPC_ValidateConfig_AllowsExactlyOneTokenSource(t *testing.T) {
 	srv := newTestProviderServer(t)
 	cfg := configValue(t, map[string]tftypes.Value{
-		"refresh_token": strVal("direct-token"),
+		"refresh_token":       strVal("direct-token"),
+		"dashboard_login_url": strVal(testDashboardLoginURL),
 	})
 
 	resp, err := srv.ValidateProviderConfig(context.Background(), &tfprotov6.ValidateProviderConfigRequest{Config: cfg})
@@ -96,6 +97,37 @@ func TestProviderRPC_ValidateConfig_AllowsExactlyOneTokenSource(t *testing.T) {
 	}
 	if hasErrorDiagnostic(resp.Diagnostics) {
 		t.Fatalf("expected no error diagnostic, got: %+v", resp.Diagnostics)
+	}
+}
+
+func TestProviderRPC_ValidateConfig_RejectsUnknownDashboardLoginURL(t *testing.T) {
+	srv := newTestProviderServer(t)
+	cfg := configValue(t, map[string]tftypes.Value{
+		"refresh_token":       strVal("direct-token"),
+		"dashboard_login_url": strVal("https://not-a-real-lucidity-deployment.example.com"),
+	})
+
+	resp, err := srv.ValidateProviderConfig(context.Background(), &tfprotov6.ValidateProviderConfigRequest{Config: cfg})
+	if err != nil {
+		t.Fatalf("ValidateProviderConfig: %v", err)
+	}
+	if !hasErrorDiagnostic(resp.Diagnostics) {
+		t.Fatalf("expected an error diagnostic for an unrecognized dashboard_login_url, got: %+v", resp.Diagnostics)
+	}
+}
+
+func TestProviderRPC_ValidateConfig_RejectsMissingDashboardLoginURL(t *testing.T) {
+	srv := newTestProviderServer(t)
+	cfg := configValue(t, map[string]tftypes.Value{
+		"refresh_token": strVal("direct-token"),
+	})
+
+	resp, err := srv.ValidateProviderConfig(context.Background(), &tfprotov6.ValidateProviderConfigRequest{Config: cfg})
+	if err != nil {
+		t.Fatalf("ValidateProviderConfig: %v", err)
+	}
+	if !hasErrorDiagnostic(resp.Diagnostics) {
+		t.Fatalf("expected an error diagnostic for a missing (required) dashboard_login_url, got: %+v", resp.Diagnostics)
 	}
 }
 
@@ -116,7 +148,8 @@ func TestProviderRPC_Configure_ErrorsWithNoTokenSource(t *testing.T) {
 func TestProviderRPC_Configure_SucceedsWithDirectToken(t *testing.T) {
 	srv := newTestProviderServer(t)
 	cfg := configValue(t, map[string]tftypes.Value{
-		"refresh_token": strVal("dummy-token"),
+		"refresh_token":       strVal("dummy-token"),
+		"dashboard_login_url": strVal(testDashboardLoginURL),
 	})
 
 	resp, err := srv.ConfigureProvider(context.Background(), &tfprotov6.ConfigureProviderRequest{Config: cfg})
@@ -128,18 +161,23 @@ func TestProviderRPC_Configure_SucceedsWithDirectToken(t *testing.T) {
 	}
 }
 
-func TestProviderRPC_Configure_ErrorsOnMalformedBaseURL(t *testing.T) {
-	srv := newTestProviderServer(t)
-	cfg := configValue(t, map[string]tftypes.Value{
-		"refresh_token": strVal("dummy-token"),
-		"base_url":      strVal("not a url"),
-	})
+func TestProviderRPC_Configure_MapsEveryKnownDashboardLoginURL(t *testing.T) {
+	for _, d := range knownDeployments {
+		d := d
+		t.Run(d.dashboardLoginURL, func(t *testing.T) {
+			srv := newTestProviderServer(t)
+			cfg := configValue(t, map[string]tftypes.Value{
+				"refresh_token":       strVal("dummy-token"),
+				"dashboard_login_url": strVal(d.dashboardLoginURL),
+			})
 
-	resp, err := srv.ConfigureProvider(context.Background(), &tfprotov6.ConfigureProviderRequest{Config: cfg})
-	if err != nil {
-		t.Fatalf("ConfigureProvider: %v", err)
-	}
-	if !hasErrorDiagnostic(resp.Diagnostics) {
-		t.Fatalf("expected an error diagnostic for a malformed base_url, got: %+v", resp.Diagnostics)
+			resp, err := srv.ConfigureProvider(context.Background(), &tfprotov6.ConfigureProviderRequest{Config: cfg})
+			if err != nil {
+				t.Fatalf("ConfigureProvider: %v", err)
+			}
+			if hasErrorDiagnostic(resp.Diagnostics) {
+				t.Fatalf("expected no error diagnostic for a known deployment, got: %+v", resp.Diagnostics)
+			}
+		})
 	}
 }
