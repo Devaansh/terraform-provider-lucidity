@@ -17,13 +17,17 @@ import (
 // broken auth wiring. Exercising the RPCs directly is what actually proves
 // ConfigValidators and Configure behave correctly.
 
+// testDashboardLoginURL is a valid dashboard_login_url value for tests that
+// aren't specifically exercising deployment-selection behavior.
+const testDashboardLoginURL = "https://www.web.lucidity.dev/dashboard"
+
 func providerConfigType() tftypes.Object {
 	return tftypes.Object{
 		AttributeTypes: map[string]tftypes.Type{
 			"refresh_token":         tftypes.String,
 			"refresh_token_file":    tftypes.String,
 			"refresh_token_command": tftypes.String,
-			"base_url":              tftypes.String,
+			"dashboard_login_url":   tftypes.String,
 			"max_parallel_requests": tftypes.Number,
 			"account_name":          tftypes.String,
 		},

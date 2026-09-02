@@ -6,24 +6,23 @@ package provider
 import (
 	"context"
 	"fmt"
-	"net/url"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/providervalidator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/Devaansh/terraform-provider-lucidity/internal/client"
 )
 
-const (
-	defaultBaseURL             = "https://dash-back.lucidity.dev"
-	defaultMaxParallelRequests = 10
-)
+const defaultMaxParallelRequests = 10
 
 var (
 	_ provider.Provider                     = &LucidityProvider{}
@@ -40,7 +39,7 @@ type lucidityProviderModel struct {
 	RefreshToken        types.String `tfsdk:"refresh_token"`
 	RefreshTokenFile    types.String `tfsdk:"refresh_token_file"`
 	RefreshTokenCommand types.String `tfsdk:"refresh_token_command"`
-	BaseURL             types.String `tfsdk:"base_url"`
+	DashboardLoginURL   types.String `tfsdk:"dashboard_login_url"`
 	MaxParallelRequests types.Int64  `tfsdk:"max_parallel_requests"`
 	AccountName         types.String `tfsdk:"account_name"`
 }
@@ -82,9 +81,12 @@ func (p *LucidityProvider) Schema(_ context.Context, _ provider.SchemaRequest, r
 				Optional:    true,
 				Description: "Shell command whose trimmed stdout is used as the Lucidity refresh token, e.g. `vault kv get -field=token secret/lucidity`. Runs via the platform shell with a 30s timeout; stdout is never logged, including at TF_LOG=DEBUG. Exactly one of refresh_token, refresh_token_file, or refresh_token_command may be set.",
 			},
-			"base_url": schema.StringAttribute{
-				Optional:    true,
-				Description: fmt.Sprintf("Lucidity API base URL for your deployment. Defaults to %s. See the provider's Getting Started documentation for the base URL matching your dashboard login URL.", defaultBaseURL),
+			"dashboard_login_url": schema.StringAttribute{
+				Required:    true,
+				Description: fmt.Sprintf("The URL you use to log in to the Lucidity dashboard. Determines the API base URL the provider talks to — there is no separate base-URL setting. Must be exactly one of: %s.", strings.Join(validDashboardLoginURLs(), ", ")),
+				Validators: []validator.String{
+					stringvalidator.OneOf(validDashboardLoginURLs()...),
+				},
 			},
 			"max_parallel_requests": schema.Int64Attribute{
 				Optional:    true,
@@ -125,15 +127,15 @@ func (p *LucidityProvider) Configure(ctx context.Context, req provider.Configure
 		return
 	}
 
-	baseURL := defaultBaseURL
-	if v := data.BaseURL.ValueString(); v != "" {
-		baseURL = v
-	}
-	if parsed, err := url.ParseRequestURI(baseURL); err != nil || parsed.Scheme == "" || parsed.Host == "" {
+	baseURL, ok := apiBaseURLFor(data.DashboardLoginURL.ValueString())
+	if !ok {
+		// Unreachable in practice: the OneOf validator already rejects any
+		// value not in knownDeployments before Configure runs. Kept as a
+		// defensive check in case the validator and that table ever drift.
 		resp.Diagnostics.AddAttributeError(
-			path.Root("base_url"),
-			"Invalid base_url",
-			fmt.Sprintf("%q is not a valid absolute URL.", baseURL),
+			path.Root("dashboard_login_url"),
+			"Unknown dashboard_login_url",
+			fmt.Sprintf("%q is not a recognized Lucidity dashboard login URL.", data.DashboardLoginURL.ValueString()),
 		)
 		return
 	}
