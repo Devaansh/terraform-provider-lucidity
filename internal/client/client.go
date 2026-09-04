@@ -156,6 +156,7 @@ func NewClient(baseURL, refreshToken string, opts ...Option) *Client {
 		opt(c)
 	}
 	c.tokens = NewTokenManager(c.httpClient, baseURL, refreshToken, c.proactiveRefreshAge, c.retryBaseDelay)
+	c.tokens.DebugLog = c.logDebug
 	return c
 }
 
@@ -163,7 +164,11 @@ func NewClient(baseURL, refreshToken string, opts ...Option) *Client {
 // body (nil for none), decoding the envelope's data field into out (nil to
 // discard it).
 func (c *Client) Do(ctx context.Context, method, path string, body any, out any) error {
-	c.sem <- struct{}{}
+	select {
+	case c.sem <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	defer func() { <-c.sem }()
 
 	var bodyBytes []byte
@@ -196,7 +201,7 @@ func (c *Client) Do(ctx context.Context, method, path string, body any, out any)
 		switch {
 		case status == http.StatusUnauthorized && !forcedRefresh:
 			forcedRefresh = true
-			if _, err := c.tokens.ForceRefresh(ctx); err != nil {
+			if _, err := c.tokens.ForceRefresh(ctx, token); err != nil {
 				return err
 			}
 			continue // single sanctioned retry, per CLAUDE.md — doesn't consume attempt

@@ -219,3 +219,46 @@ func TestNoSecretLeaksInDebugLog(t *testing.T) {
 		t.Fatalf("access token leaked into debug log: %s", logOutput)
 	}
 }
+
+// TestClient_DoRespectsContextCancellationWhileWaitingForSemaphore proves the
+// semaphore-acquisition fix: with the single concurrency slot held by
+// another in-flight call, a second Do() whose context is already cancelled
+// must return promptly with ctx.Err() instead of blocking until the first
+// call releases the slot.
+func TestClient_DoRespectsContextCancellationWhileWaitingForSemaphore(t *testing.T) {
+	var refreshCalls int32
+	holdFirstCall := make(chan struct{})
+	firstCallStarted := make(chan struct{})
+	srv := newMockServer(t, &refreshCalls, func(w http.ResponseWriter, r *http.Request) {
+		close(firstCallStarted)
+		<-holdFirstCall
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(envelope{Success: true, Data: json.RawMessage(`{"foo":"bar"}`)})
+	})
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "refresh-secret", WithHTTPClient(srv.Client()), withRetryBaseDelay(time.Millisecond), WithMaxParallelRequests(1))
+
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- c.Do(context.Background(), http.MethodGet, protectedPath, nil, nil)
+	}()
+
+	<-firstCallStarted // the one semaphore slot is now held
+
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := c.Do(cancelledCtx, http.MethodGet, protectedPath, nil, nil)
+	close(holdFirstCall)
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if err != context.Canceled {
+		t.Fatalf("got %v, want context.Canceled", err)
+	}
+
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first Do call: %v", err)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -189,5 +190,141 @@ func TestTokenManager_RefreshExhaustsRetriesOn5xx(t *testing.T) {
 	}
 	if n := atomic.LoadInt32(&calls); n != maxRetryAttempts {
 		t.Fatalf("expected exactly %d calls (retry budget exhausted), got %d", maxRetryAttempts, n)
+	}
+}
+
+func TestTokenManager_DebugLogNeverLeaksTokens(t *testing.T) {
+	const refreshSecret = "super-secret-refresh-token-value"
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			w.WriteHeader(http.StatusInternalServerError) // force one retry into the log too
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(refreshResponseBody{AccessToken: "issued-access-token"})
+	}))
+	defer srv.Close()
+
+	tm := NewTokenManager(srv.Client(), srv.URL, refreshSecret, DefaultProactiveRefreshAge, time.Millisecond)
+
+	var captured strings.Builder
+	tm.DebugLog = func(_ context.Context, msg string, fields map[string]any) {
+		captured.WriteString(msg)
+		for k, v := range fields {
+			fmt.Fprintf(&captured, " %s=%v", k, v)
+		}
+		captured.WriteString("\n")
+	}
+
+	got, err := tm.AccessToken(context.Background())
+	if err != nil {
+		t.Fatalf("AccessToken: %v", err)
+	}
+	if got != "issued-access-token" {
+		t.Fatalf("got %q, want issued-access-token", got)
+	}
+
+	logOutput := captured.String()
+	if logOutput == "" {
+		t.Fatal("expected DebugLog to be called at least once")
+	}
+	if strings.Contains(logOutput, refreshSecret) {
+		t.Fatalf("refresh token leaked into debug log: %s", logOutput)
+	}
+	if strings.Contains(logOutput, "issued-access-token") {
+		t.Fatalf("issued access token leaked into debug log: %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "status=500") || !strings.Contains(logOutput, "status=200") {
+		t.Fatalf("expected both the failed and successful attempt's status logged, got: %s", logOutput)
+	}
+}
+
+// TestTokenManager_RefreshSurvivesCallerCancellation proves the
+// context.WithoutCancel fix: a refresh is shared with any other goroutine
+// that arrives while it's in flight, so it must not abort just because the
+// particular caller that happened to initiate it later cancels its own
+// context. Without the fix, this test fails — the in-flight HTTP request is
+// tied to ctx via http.NewRequestWithContext, so cancelling ctx aborts it
+// and AccessToken surfaces context.Canceled instead of the real result.
+func TestTokenManager_RefreshSurvivesCallerCancellation(t *testing.T) {
+	reachedServer := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(reachedServer)
+		time.Sleep(20 * time.Millisecond) // give the test time to cancel before responding
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(refreshResponseBody{AccessToken: "survived-token"})
+	}))
+	defer srv.Close()
+
+	tm := newTestTokenManager(srv.Client(), srv.URL, "refresh-secret")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-reachedServer
+		cancel()
+	}()
+
+	token, err := tm.AccessToken(ctx)
+	if err != nil {
+		t.Fatalf("AccessToken: %v (expected it to survive the caller's own context cancellation)", err)
+	}
+	if token != "survived-token" {
+		t.Fatalf("got %q, want survived-token", token)
+	}
+}
+
+func TestTokenManager_ForceRefresh_SkipsRefetchIfAlreadyFresh(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(refreshResponseBody{AccessToken: "should-not-be-issued"})
+	}))
+	defer srv.Close()
+
+	tm := newTestTokenManager(srv.Client(), srv.URL, "refresh-secret")
+	tm.mu.Lock()
+	tm.accessToken = "already-fresh-token"
+	tm.issuedAt = time.Now()
+	tm.mu.Unlock()
+
+	got, err := tm.ForceRefresh(context.Background(), "stale-token-that-does-not-match")
+	if err != nil {
+		t.Fatalf("ForceRefresh: %v", err)
+	}
+	if got != "already-fresh-token" {
+		t.Fatalf("got %q, want already-fresh-token (no refetch)", got)
+	}
+	if n := atomic.LoadInt32(&calls); n != 0 {
+		t.Fatalf("expected 0 refresh-server calls, got %d", n)
+	}
+}
+
+func TestTokenManager_ForceRefresh_RefetchesIfStillStale(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(refreshResponseBody{AccessToken: "new-token"})
+	}))
+	defer srv.Close()
+
+	tm := newTestTokenManager(srv.Client(), srv.URL, "refresh-secret")
+	tm.mu.Lock()
+	tm.accessToken = "stale-token"
+	tm.issuedAt = time.Now()
+	tm.mu.Unlock()
+
+	got, err := tm.ForceRefresh(context.Background(), "stale-token")
+	if err != nil {
+		t.Fatalf("ForceRefresh: %v", err)
+	}
+	if got != "new-token" {
+		t.Fatalf("got %q, want new-token", got)
+	}
+	if n := atomic.LoadInt32(&calls); n != 1 {
+		t.Fatalf("expected exactly 1 refresh-server call, got %d", n)
 	}
 }

@@ -60,6 +60,17 @@ type TokenManager struct {
 	issuedAt    time.Time
 	refreshing  chan struct{} // non-nil while a refresh is in flight; closed when it completes
 	refreshErr  error         // result of the in-flight refresh, valid once refreshing is closed
+
+	// DebugLog, if set, receives non-secret call metadata (status, attempt)
+	// after every refresh attempt. Never passes token material. Wired by
+	// NewClient to Client.logDebug, same contract as Client.DebugLog.
+	DebugLog func(ctx context.Context, msg string, fields map[string]any)
+}
+
+func (m *TokenManager) logDebug(ctx context.Context, msg string, fields map[string]any) {
+	if m.DebugLog != nil {
+		m.DebugLog(ctx, msg, fields)
+	}
 }
 
 // NewTokenManager constructs a TokenManager. baseURL must not have a
@@ -105,7 +116,13 @@ func (m *TokenManager) AccessToken(ctx context.Context) (string, error) {
 	m.refreshing = done
 	m.mu.Unlock()
 
-	token, err := m.doRefresh(ctx)
+	// The refresh is shared: other goroutines are waiting on `done` above
+	// regardless of which caller's context happened to start it. Detach from
+	// this caller's cancellation (context.WithoutCancel keeps values, drops
+	// cancellation) so one goroutine's ctx being cancelled doesn't abort a
+	// refresh every other waiter still needs. Still bounded — NewClient's
+	// http.Client has its own 30s Timeout regardless of context.
+	token, err := m.doRefresh(context.WithoutCancel(ctx))
 
 	m.mu.Lock()
 	m.refreshErr = err
@@ -120,11 +137,20 @@ func (m *TokenManager) AccessToken(ctx context.Context) (string, error) {
 	return token, err
 }
 
-// ForceRefresh discards any cached access token and fetches a new one. This
-// is the single sanctioned retry path for a 401 returned by any other
-// endpoint: refresh once, retry once, surface the error if it recurs.
-func (m *TokenManager) ForceRefresh(ctx context.Context) (string, error) {
+// ForceRefresh discards the cached access token and fetches a new one — but
+// only if the cache still holds failedToken, the token that actually got the
+// 401. If another goroutine already refreshed in the interim (its result
+// lands here as m.accessToken != failedToken), that fresher token is
+// returned directly instead of triggering a redundant refresh. This is the
+// single sanctioned retry path for a 401 returned by any other endpoint:
+// refresh once, retry once, surface the error if it recurs.
+func (m *TokenManager) ForceRefresh(ctx context.Context, failedToken string) (string, error) {
 	m.mu.Lock()
+	if m.accessToken != "" && m.accessToken != failedToken {
+		token := m.accessToken
+		m.mu.Unlock()
+		return token, nil
+	}
 	m.accessToken = ""
 	m.issuedAt = time.Time{}
 	m.mu.Unlock()
@@ -154,6 +180,13 @@ func (m *TokenManager) doRefresh(ctx context.Context) (string, error) {
 		if err != nil {
 			return "", err
 		}
+
+		// Non-secret metadata only — never reqBody (the refresh token) or
+		// respBody (the freshly-issued access token).
+		m.logDebug(ctx, "lucidity refresh token call", map[string]any{
+			"status":  status,
+			"attempt": attempt,
+		})
 
 		switch {
 		case status == http.StatusUnauthorized:

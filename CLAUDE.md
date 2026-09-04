@@ -49,6 +49,22 @@ Phase 1 definition of done:
      every other endpoint (fixed 2026-09-03 — previously `doRefresh` didn't
      retry at all, inconsistent with the policy below).
    - Access tokens live in memory only. Never persisted, never logged.
+   - **Round 2 fixes (2026-09-05):**
+     - `TokenManager` gained a `DebugLog` hook (wired from `Client.logDebug`
+       in `NewClient`), logging `status`/`attempt` per refresh call —
+       previously refresh-token exchanges produced zero `TF_LOG=DEBUG`
+       output at all, unlike every other API call.
+     - The single-flight refresh's initiating call now runs under
+       `context.WithoutCancel(ctx)`. Previously it used whichever caller's
+       context happened to start the refresh; that caller cancelling its own
+       context (e.g. Terraform tearing down one operation) aborted the
+       shared refresh for every other goroutine waiting on it too. Safe
+       because `NewClient`'s `http.Client` already enforces its own 30s
+       `Timeout` independent of context.
+     - `ForceRefresh(ctx, failedToken)` now takes the token that actually
+       got the 401 and skips the refetch if the cache no longer holds it
+       (another goroutine already refreshed first) — returns that fresher
+       token directly instead of an avoidable extra refresh call.
 3. `internal/client/client.go` — HTTP client:
    - Required headers on EVERY call: `X-Authtype: lucidity_access_token`,
      `Authorization: <raw token>` (NO "Bearer " prefix — enforce in one place),
@@ -67,7 +83,10 @@ Phase 1 definition of done:
      `TestClient_401OnFinalRetryAttemptStillRetriesWithFreshToken`).
    - Client-side concurrency semaphore, default 10, from provider config.
      `max_parallel_requests` is validated (`AtLeast(1)`) — a 0/negative value
-     is a config-time error, not a silent fallback to the default.
+     is a config-time error, not a silent fallback to the default. Semaphore
+     acquisition respects context cancellation (fixed 2026-09-05 — previously
+     `c.sem <- struct{}{}` blocked unconditionally even with an
+     already-cancelled/timed-out `ctx`).
    - Secret scrubbing: refresh + access tokens redacted from ALL logging
      including TF_LOG=DEBUG. Add a test that greps captured debug output
      for token material.
