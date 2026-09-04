@@ -38,9 +38,16 @@ Phase 1 definition of done:
    with dedicated-key generation instructions).
 2. `internal/client/auth.go` — token manager:
    - Exchanges long-lived refresh token via `POST /external/api/v1/auth/user-token/refresh`.
-   - Access tokens expire in 15 min → proactive refresh at the 12-minute mark.
+   - Access tokens expire in 15 min (`client.AccessTokenTTL`) → proactive
+     refresh at the 12-minute mark by default (`client.DefaultProactiveRefreshAge`),
+     overridable via the provider's `proactive_refresh_buffer_minutes`
+     attribute (see Provider config block below).
    - Mutex-protected single-flight refresh (Terraform runs concurrent ops).
-   - On 401: force one refresh + one retry; if still 401, surface error.
+   - On 401: force one refresh + one retry; if still 401, surface error. This
+     retry is independent of the 5xx-backoff budget below — see bug note.
+   - The refresh call itself retries 5xx with the same backoff policy as
+     every other endpoint (fixed 2026-09-03 — previously `doRefresh` didn't
+     retry at all, inconsistent with the policy below).
    - Access tokens live in memory only. Never persisted, never logged.
 3. `internal/client/client.go` — HTTP client:
    - Required headers on EVERY call: `X-Authtype: lucidity_access_token`,
@@ -50,7 +57,17 @@ Phase 1 definition of done:
      All error diagnostics MUST include error.code, error.message, requestId.
    - Retry: 500s with exponential backoff; NEVER auto-retry 400s.
      CONFLICT semantics unconfirmed — render unmapped codes generically but completely.
+   - **Bug fixed 2026-09-03:** the 5xx-backoff retries and the one sanctioned
+     401-forced-refresh retry used to share one bounded attempt counter. If 3
+     straight 500s consumed all-but-one attempt and the last attempt came
+     back as a first-time 401, the forced refresh happened but the retry
+     using the fresh token never did — fell through to a generic error
+     instead of succeeding. Fixed by giving the 401 retry its own budget,
+     independent of the 5xx counter (see
+     `TestClient_401OnFinalRetryAttemptStillRetriesWithFreshToken`).
    - Client-side concurrency semaphore, default 10, from provider config.
+     `max_parallel_requests` is validated (`AtLeast(1)`) — a 0/negative value
+     is a config-time error, not a silent fallback to the default.
    - Secret scrubbing: refresh + access tokens redacted from ALL logging
      including TF_LOG=DEBUG. Add a test that greps captured debug output
      for token material.
@@ -61,7 +78,8 @@ Phase 1 definition of done:
      refresh_token_file    = "…"  # Path to a file containing only the token
      refresh_token_command = "…"  # Shell command; trimmed stdout is used as the token
      dashboard_login_url   = "…"  # REQUIRED, no default — must be one of the 5 known values below
-     max_parallel_requests = 10   # optional
+     max_parallel_requests = 10   # optional, must be >= 1
+     proactive_refresh_buffer_minutes = 3  # optional, 1-14, default 3 (renew at the 12-min mark)
      account_name          = "…"  # optional; reserved for Phase 2 update APIs
    }
    ```
@@ -102,6 +120,16 @@ Phase 1 definition of done:
      A customer on a deployment not yet in this table can't configure the
      provider until a new release adds it — the maintainer chose closed
      validation over that escape hatch.
+   - `proactive_refresh_buffer_minutes` (added 2026-09-03): optional Int64,
+     `int64validator.Between(1, 14)`. How many minutes before the 15-minute
+     access-token expiry (`client.AccessTokenTTL`) to proactively renew it.
+     Unset → `client.DefaultProactiveRefreshAge` (3-minute buffer, i.e. renew
+     at the 12-minute mark) — today's exact default behavior, unchanged.
+     Deliberately made user-configurable per the maintainer's explicit call,
+     overriding the initial recommendation to keep it an internal-only
+     constant (the margin is a client-side implementation detail, not
+     deployment-specific like `dashboard_login_url`) — kept here for the
+     record in case it's revisited.
 
    Rationale: rather than the provider baking in bespoke Vault/AWS-SM/
    Azure-KV/GCP-SM client integrations (real maintenance surface for a

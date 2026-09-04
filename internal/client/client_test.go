@@ -85,6 +85,42 @@ func TestClient_401RetryStillFails(t *testing.T) {
 	}
 }
 
+// TestClient_401OnFinalRetryAttemptStillRetriesWithFreshToken guards against
+// a bug where the 5xx-backoff budget and the one sanctioned 401-forced-refresh
+// retry shared a single bounded attempt counter: 3 straight 500s followed by
+// a first-time 401 on the 4th (last) attempt would force-refresh the token
+// but then exit the loop before retrying with it, surfacing a generic
+// "exhausted retries" error instead of actually succeeding.
+func TestClient_401OnFinalRetryAttemptStillRetriesWithFreshToken(t *testing.T) {
+	var refreshCalls, protectedCalls int32
+	srv := newMockServer(t, &refreshCalls, func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&protectedCalls, 1)
+		switch {
+		case n <= 3:
+			w.WriteHeader(http.StatusInternalServerError)
+		case n == 4:
+			w.WriteHeader(http.StatusUnauthorized)
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(envelope{Success: true, Data: json.RawMessage(`{"foo":"bar"}`)})
+		}
+	})
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "refresh-secret", WithHTTPClient(srv.Client()), withRetryBaseDelay(time.Millisecond))
+
+	var out protectedResult
+	if err := c.Do(context.Background(), http.MethodGet, protectedPath, nil, &out); err != nil {
+		t.Fatalf("Do: %v (expected the 401-forced-refresh retry to succeed, not be dropped)", err)
+	}
+	if out.Foo != "bar" {
+		t.Fatalf("got %+v, want Foo=bar", out)
+	}
+	if got := atomic.LoadInt32(&protectedCalls); got != 5 {
+		t.Fatalf("expected 5 protected-endpoint calls (3x 500, 1x 401, 1x success), got %d", got)
+	}
+}
+
 func TestClient_RetriesOn5xxNotOn4xx(t *testing.T) {
 	var refreshCalls, protectedCalls int32
 	srv := newMockServer(t, &refreshCalls, func(w http.ResponseWriter, r *http.Request) {

@@ -7,7 +7,9 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/providervalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -36,12 +38,13 @@ type LucidityProvider struct {
 }
 
 type lucidityProviderModel struct {
-	RefreshToken        types.String `tfsdk:"refresh_token"`
-	RefreshTokenFile    types.String `tfsdk:"refresh_token_file"`
-	RefreshTokenCommand types.String `tfsdk:"refresh_token_command"`
-	DashboardLoginURL   types.String `tfsdk:"dashboard_login_url"`
-	MaxParallelRequests types.Int64  `tfsdk:"max_parallel_requests"`
-	AccountName         types.String `tfsdk:"account_name"`
+	RefreshToken               types.String `tfsdk:"refresh_token"`
+	RefreshTokenFile           types.String `tfsdk:"refresh_token_file"`
+	RefreshTokenCommand        types.String `tfsdk:"refresh_token_command"`
+	DashboardLoginURL          types.String `tfsdk:"dashboard_login_url"`
+	MaxParallelRequests        types.Int64  `tfsdk:"max_parallel_requests"`
+	ProactiveRefreshBufferMins types.Int64  `tfsdk:"proactive_refresh_buffer_minutes"`
+	AccountName                types.String `tfsdk:"account_name"`
 }
 
 // LucidityClients bundles the API client made available to resources and
@@ -91,6 +94,21 @@ func (p *LucidityProvider) Schema(_ context.Context, _ provider.SchemaRequest, r
 			"max_parallel_requests": schema.Int64Attribute{
 				Optional:    true,
 				Description: fmt.Sprintf("Maximum number of concurrent Lucidity API requests. Defaults to %d.", defaultMaxParallelRequests),
+				Validators: []validator.Int64{
+					int64validator.AtLeast(1),
+				},
+			},
+			"proactive_refresh_buffer_minutes": schema.Int64Attribute{
+				Optional: true,
+				Description: fmt.Sprintf(
+					"How many minutes before the %d-minute access-token expiry to proactively renew it. Defaults to %d. Must be between 1 and %d.",
+					int(client.AccessTokenTTL.Minutes()),
+					int((client.AccessTokenTTL - client.DefaultProactiveRefreshAge).Minutes()),
+					int(client.AccessTokenTTL.Minutes())-1,
+				),
+				Validators: []validator.Int64{
+					int64validator.Between(1, int64(client.AccessTokenTTL.Minutes())-1),
+				},
 			},
 			"account_name": schema.StringAttribute{
 				Optional:    true,
@@ -145,7 +163,16 @@ func (p *LucidityProvider) Configure(ctx context.Context, req provider.Configure
 		maxParallel = int(data.MaxParallelRequests.ValueInt64())
 	}
 
-	apiClient := client.NewClient(baseURL, refreshToken, client.WithMaxParallelRequests(maxParallel))
+	proactiveRefreshAge := client.DefaultProactiveRefreshAge
+	if !data.ProactiveRefreshBufferMins.IsNull() {
+		bufferMinutes := data.ProactiveRefreshBufferMins.ValueInt64()
+		proactiveRefreshAge = client.AccessTokenTTL - time.Duration(bufferMinutes)*time.Minute
+	}
+
+	apiClient := client.NewClient(baseURL, refreshToken,
+		client.WithMaxParallelRequests(maxParallel),
+		client.WithProactiveRefreshAge(proactiveRefreshAge),
+	)
 	apiClient.DebugLog = func(ctx context.Context, msg string, fields map[string]any) {
 		tflog.Debug(ctx, msg, fields)
 	}

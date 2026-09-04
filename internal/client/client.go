@@ -85,7 +85,8 @@ type Client struct {
 	tokens     *TokenManager
 	sem        chan struct{}
 
-	retryBaseDelay time.Duration // overridable in tests to avoid slow sleeps
+	retryBaseDelay      time.Duration // overridable in tests to avoid slow sleeps
+	proactiveRefreshAge time.Duration
 
 	// DebugLog, if set, receives non-secret call metadata (method, path,
 	// status, requestId) after every attempt. Client never passes token or
@@ -126,6 +127,14 @@ func WithHTTPClient(hc *http.Client) Option {
 	return func(c *Client) { c.httpClient = hc }
 }
 
+// WithProactiveRefreshAge overrides how long an access token is used before
+// it's proactively renewed ahead of its real expiry (AccessTokenTTL).
+// Defaults to DefaultProactiveRefreshAge; driven by the provider's
+// proactive_refresh_buffer_minutes attribute.
+func WithProactiveRefreshAge(d time.Duration) Option {
+	return func(c *Client) { c.proactiveRefreshAge = d }
+}
+
 // withRetryBaseDelay overrides the exponential-backoff base delay (tests only).
 func withRetryBaseDelay(d time.Duration) Option {
 	return func(c *Client) { c.retryBaseDelay = d }
@@ -137,15 +146,16 @@ func withRetryBaseDelay(d time.Duration) Option {
 func NewClient(baseURL, refreshToken string, opts ...Option) *Client {
 	hc := &http.Client{Timeout: 30 * time.Second}
 	c := &Client{
-		httpClient:     hc,
-		baseURL:        baseURL,
-		sem:            make(chan struct{}, defaultMaxParallelRequests),
-		retryBaseDelay: defaultRetryBaseDelay,
+		httpClient:          hc,
+		baseURL:             baseURL,
+		sem:                 make(chan struct{}, defaultMaxParallelRequests),
+		retryBaseDelay:      defaultRetryBaseDelay,
+		proactiveRefreshAge: DefaultProactiveRefreshAge,
 	}
 	for _, opt := range opts {
 		opt(c)
 	}
-	c.tokens = NewTokenManager(c.httpClient, baseURL, refreshToken)
+	c.tokens = NewTokenManager(c.httpClient, baseURL, refreshToken, c.proactiveRefreshAge, c.retryBaseDelay)
 	return c
 }
 
@@ -165,8 +175,14 @@ func (c *Client) Do(ctx context.Context, method, path string, body any, out any)
 		bodyBytes = b
 	}
 
+	// forcedRefresh caps the 401-forced-refresh retry at exactly one
+	// occurrence (a second 401 always returns AuthError below) — it does NOT
+	// share the 5xx backoff budget tracked by attempt. Keeping the two
+	// independent is deliberate: they used to share one bounded counter, and
+	// a 401 landing on what would have been the final 5xx attempt silently
+	// dropped the forced-refresh retry entirely (fixed 2026-09-03).
 	forcedRefresh := false
-	for attempt := 0; attempt < maxRetryAttempts; attempt++ {
+	for attempt := 0; ; attempt++ {
 		token, err := c.tokens.AccessToken(ctx)
 		if err != nil {
 			return err
@@ -183,11 +199,11 @@ func (c *Client) Do(ctx context.Context, method, path string, body any, out any)
 			if _, err := c.tokens.ForceRefresh(ctx); err != nil {
 				return err
 			}
-			continue // single sanctioned retry, per CLAUDE.md
+			continue // single sanctioned retry, per CLAUDE.md — doesn't consume attempt
 		case status == http.StatusUnauthorized:
 			return AuthError{}
 		case status >= 500:
-			if attempt == maxRetryAttempts-1 {
+			if attempt >= maxRetryAttempts-1 {
 				return parseErrorBody(status, respBody)
 			}
 			select {
@@ -202,11 +218,17 @@ func (c *Client) Do(ctx context.Context, method, path string, body any, out any)
 			return decodeEnvelope(respBody, out)
 		}
 	}
-	return fmt.Errorf("lucidity: exhausted retries")
 }
 
 func (c *Client) backoff(attempt int) time.Duration {
-	return c.retryBaseDelay * time.Duration(math.Pow(2, float64(attempt)))
+	return backoffDelay(c.retryBaseDelay, attempt)
+}
+
+// backoffDelay is the shared exponential-backoff calculation used by both
+// Client.Do (via Client.backoff) and TokenManager.doRefresh, so the two
+// retry loops behave identically.
+func backoffDelay(base time.Duration, attempt int) time.Duration {
+	return base * time.Duration(math.Pow(2, float64(attempt)))
 }
 
 func (c *Client) doOnce(ctx context.Context, method, path string, bodyBytes []byte, accessToken string) (int, []byte, error) {
