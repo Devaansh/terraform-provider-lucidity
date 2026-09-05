@@ -72,7 +72,14 @@ Phase 1 definition of done:
    - Parse standard envelope `{success, data, error{code,message}, requestId}`.
      All error diagnostics MUST include error.code, error.message, requestId.
    - Retry: 500s with exponential backoff; NEVER auto-retry 400s.
-     CONFLICT semantics unconfirmed — render unmapped codes generically but completely.
+     **CONFLICT confirmed (2026-09-06): "Already a tenant exists with the
+     provided details."** Not transient — never retry it (already the
+     behavior, unchanged). This is a real, actionable business-logic state
+     Phase 2's `lucidity_tenant` Create() needs to handle explicitly (likely
+     the same pattern as the existing INACTIVE-entry pre-check below: a
+     clear error naming the conflicting account rather than a generic
+     APIError). Other still-unmapped codes continue to render generically
+     but completely.
    - **Bug fixed 2026-09-03:** the 5xx-backoff retries and the one sanctioned
      401-forced-refresh retry used to share one bounded attempt counter. If 3
      straight 500s consumed all-but-one attempt and the last attempt came
@@ -275,7 +282,8 @@ the "desired vs actual" output pattern (Output 3 in planning).
 
 ## Open questions (do not block Phase 1)
 
-1. CONFLICT error-code semantics — maintainer chasing Lucidity.
+1. ~~CONFLICT error-code semantics~~ **Resolved 2026-09-06:** "Already a
+   tenant exists with the provided details." See the client.go bullet above.
 2. Whether update APIs' `Account` param is derivable from token.
 3. Onboard re-trigger response shape for existing ACTIVE tenant (201 vs 200?);
    skipCloudPermissionCheck semantics on re-trigger; failure atomicity.
