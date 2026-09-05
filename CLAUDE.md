@@ -170,6 +170,11 @@ Phase 1 definition of done:
    recipes for Vault/AWS SM/Azure KV/GCP SM), data-source-fed `refresh_token`
    (with state-encryption caveat), tfvars (discouraged, local only).
    Hardcoding in .tf: documented as never-do.
+   **Done (2026-09-06):** all four backend recipes, both attribute- and
+   data-source-fed options per backend, and the tfvars/hardcoding guidance
+   are in the README's "Supplying the refresh token" section. Still missing:
+   a real `tfplugindocs`-generated docs page — deferred with the `examples/`
+   directory to Phase 2 (see the Style section note below).
 
 ### Required error message (401 / expired refresh token)
 
