@@ -17,9 +17,13 @@ revisit them without asking the maintainer.
 
 ## Current scope — PHASE 1: AUTH ONLY
 
-Build ONLY the auth layer now. Tenant resource/data source come in Phase 2,
-after Lucidity releases two new display-name update APIs (~1 week away).
-Phase 1 definition of done:
+Build ONLY the auth layer now. Tenant resource/data source come in Phase 2.
+**Update (2026-09-06):** the update APIs shipped; Phase 2's design below has
+been reconciled against the real Tenant API doc and live-tested against a
+real account (see "Update APIs" and the live-testing notes under Phase 2).
+Phase 2 *implementation* has not started — this session was reconciliation
+and testing only, no `internal/provider` resource/data-source code exists
+yet. Phase 1 definition of done:
 - `terraform plan` with an empty config + provider block succeeds against sandbox.
   **Caveat (discovered 2026-08-21):** Terraform prunes a provider from the
   plan graph when nothing references it, so with zero resources/data sources
@@ -106,7 +110,7 @@ Phase 1 definition of done:
      dashboard_login_url   = "…"  # REQUIRED, no default — must be one of the 5 known values below
      max_parallel_requests = 10   # optional, must be >= 1
      proactive_refresh_buffer_minutes = 3  # optional, 1-14, default 3 (renew at the 12-min mark)
-     account_name          = "…"  # optional; reserved for Phase 2 update APIs
+     account_name          = "…"  # REQUIRED (locked 2026-09-06) — see below
    }
    ```
    **Token-source precedence (locked 2026-08-20):** exactly one of
@@ -156,6 +160,18 @@ Phase 1 definition of done:
      constant (the margin is a client-side implementation detail, not
      deployment-specific like `dashboard_login_url`) — kept here for the
      record in case it's revisited.
+   - `account_name` (locked 2026-09-06): **required.** The maintainer wants
+     `Configure()` to validate that the refresh token actually belongs to
+     the declared account — specifically to catch "wrong refresh token from
+     the wrong account" misconfiguration before any tenant operation runs.
+     **Blocked on a real gap, not yet implementable:** live-testing on
+     2026-09-06 checked response headers and bodies across refresh/list/
+     onboard calls and found no field or endpoint anywhere that identifies
+     which dashboard account a token belongs to. The `account_name`
+     attribute itself (required, plain string) can and does go in now; the
+     actual cross-validation logic cannot be written until either Lucidity
+     exposes such an endpoint or an alternative signal turns up. Track this
+     as the top open item below, not a silently-dropped requirement.
 
    Rationale: rather than the provider baking in bespoke Vault/AWS-SM/
    Azure-KV/GCP-SM client integrations (real maintenance surface for a
@@ -195,25 +211,46 @@ Everything below is decided; implement when the maintainer says Phase 2 starts.
 
 ### `lucidity_tenant` resource
 
-- One resource per cloud account. Users group accounts by environment in
-  locals and use for_each keyed by account_id (see docs/examples/lucidity-tenants.tf).
-- Computed attributes: `tenant_id`, `status`.
+- One resource per cloud account. Onboarding is AWS-only today (Azure/GCP
+  return `400 INVALID_REQUEST`); List/Deboard/Update accept all three
+  providers. See `docs/examples/lucidity-tenants.tf` for plain,
+  non-abstracted example usage — one explicit resource block per account, no
+  locals map/for_each (the maintainer explicitly rejected a JSON-like
+  grouping structure here, twice, in favor of writing it "as per terraform").
+- Computed attributes: `tenant_id`, `status`. New (2026-09-06):
+  `cloud_entity_name` should also become computed — the provider-side
+  account name, only available from List, not from onboard's response.
+- Required, non-empty list attribute: `product_list` (new field, not in
+  earlier planning). Only `AUTOSCALER` is valid today — recommend validating
+  it as a closed set the same way `dashboard_login_url` is
+  (`stringvalidator`-style), consistent with this project's established
+  philosophy. Request field is `productList`; the onboard *response* field
+  is `products` (different name) — don't conflate the two in Go struct tags.
+- `aws_root_id` **does not exist in the current API** (confirmed removed —
+  earlier planning had this field on the onboarding checklist from an older
+  doc version; the current onboard AND update field tables have no trace of
+  it). Never send it, never reference it.
 - Immutable (RequiresReplace, gated by protection below): `cloud_provider`,
   `cloud_provider_account_id`.
-- In-place updatable via onboard re-trigger: role/policy names and equivalents.
-  **One-change-at-a-time rule:** a plan-time ConfigValidator MUST error if more
-  than one mutable config field changes in a single plan (Lucidity's re-trigger
-  mechanism supports one change at a time; all other fields carried over
-  verbatim from state).
-- `display_name`: NEVER RequiresReplace under any circumstance. Until the
-  update API ships, changing it is a plan-time ERROR telling the user the
-  update API is coming. After: in-place update via the tenant-ID endpoint.
+- **Updates go through the real `PATCH /tenants` endpoint (see "Update
+  APIs" below) — not onboard re-trigger.** Onboard is create-only; it does
+  not support re-triggering at all (an existing tenant, ACTIVE or INACTIVE,
+  always gets `409 CONFLICT`). The old "one-change-at-a-time" rule is
+  dropped: `PATCH` is a normal partial-update endpoint with no stated
+  restriction on how many fields you send in one call, and its old rationale
+  (re-trigger only supported one field) no longer exists. `Update()` sends
+  every changed field in a single `PATCH` call.
+- `display_name`: NEVER RequiresReplace, updatable in-place immediately —
+  the update API this was waiting on has shipped, so there's no "plan-time
+  ERROR until the API ships" fallback path to build anymore.
 
 ### Deboard safety (business-critical — deboarding is IRREVERSIBLE)
 
 An INACTIVE tenant CANNOT be reactivated via API — only Lucidity support can
 restore it. Deboarding an account with running services causes disruption.
-Three-tier destroy behavior:
+Confirmed by the current doc: deboard is idempotent (`200 OK` either way),
+distinguishing `DE_BOARDED` (was active) from `ALREADY_DE_BOARDED` (no-op) in
+the response message. Three-tier destroy behavior:
 
 | Config | `terraform destroy` result |
 |---|---|
@@ -239,17 +276,43 @@ successful "forget" path warns). Tests must assert all three paths.
   > re-onboarding via API is not possible. Contact Lucidity support to
   > restore this account.
 
-### Update APIs (specs from maintainer; confirm request shapes when released)
+  **Locked 2026-09-06:** keep this pre-check even though onboard itself now
+  natively returns `409 CONFLICT` for exactly this case too (distinct
+  message: "An already deboarded (INACTIVE) tenant exists for
+  cloudProviderAccountId '…'; re-onboarding support does not exist right
+  now."). Maintainer's explicit call: the list-and-match pre-check stays as
+  designed; onboard's native 409 is a defense-in-depth backstop for the race
+  window between the pre-check and the actual onboard call, not a
+  replacement for it. The *other* CONFLICT variant — "A tenant already
+  exists for cloudProviderAccountId '…'" (tenant is ACTIVE, not INACTIVE) —
+  needs the same explicit-error treatment in Create(), without the
+  support-contact framing (an active duplicate isn't a Lucidity-support
+  situation, it's a config error — most likely a `for_each` key collision).
 
-- "Update Tenant Friendly Name" (by current name): renames ALL tenants with
-  that display name INCLUDING ones outside Terraform state → NEVER used by the
-  resource. Go client only, documented for scripting.
-- "Update Tenant Friendly Name With Tenant ID": inputs = Account (Lucidity
-  dashboard account name, e.g. "customerA"), tenant/account id, new display
-  name. This is what the resource uses. Requires provider `account_name`
-  (open question: whether derivable from token — ask Lucidity).
-- Environment rename = N independent per-tenant-ID calls; transient mixed
-  dashboard state mid-apply is expected and fine.
+### Update APIs — real design, replaces the old two-API assumption (rewritten 2026-09-06)
+
+The actual API is a single unified endpoint, architecturally different from
+what earlier planning assumed (a global by-name rename + a separate
+tenant-ID-scoped one needing an "Account" param). That older description is
+gone from current docs entirely — treated as superseded, not implemented.
+
+- **Endpoint:** `PATCH /external/client/api/v1/tenants` → `200 OK`.
+- Tenant identified by `cloudProvider` + `cloudProviderAccountId`, resolved
+  under the caller's account from the token — same pattern as onboard/list/
+  deboard. **No Account param anywhere in this API.** Tenant must be
+  `ACTIVE`.
+- Partial update: send only what changes. Must send `displayName` and/or at
+  least one provider auth field, or the request is rejected.
+- Cloud `authInfo` is **merged** — only the provider fields you send are
+  overwritten; the rest of the existing `authInfo` is preserved.
+- `externalId` can **never** be changed via update — the value from
+  onboarding is kept forever regardless of what's sent.
+- Per-provider updatable fields: **AWS** — `awsIAMRoleName`,
+  `awsIAMPolicyName` (ARN rebuilt, existing `externalId` preserved);
+  **AZURE** — `azureServicePrincipalId`, `azureDirectoryId` (merged into
+  `authInfo`); **GCP** — `displayName` only.
+- No re-trigger concept exists — see the `lucidity_tenant` resource bullets
+  above.
 
 ### `skip_cloud_permission_check` attribute (optional, default false)
 
@@ -259,6 +322,16 @@ the latest Lucidity permissions. Note: this ignores permission validation
 entirely — even if the account connects successfully, you may run into
 permission issues later on."
 
+**Live-tested 2026-09-06:** confirmed this only skips the *permission*
+check — Lucidity still performs a baseline cloud-account-reachability
+validation regardless of this flag. A synthetic/unreachable AWS account
+number (tested twice, consistent) fails with `401 UNAUTHORIZED` /
+"Authentication failed: the cloud account could not be validated." even
+with `skipCloudPermissionCheck: true`. No orphaned tenant record is left
+behind by a failed attempt. Create()'s error handling needs a case for this
+401 distinctly from the "bad/expired access token" 401 — same HTTP status
+and error code, different meaning, only distinguishable by message text.
+
 ### Import
 
 `terraform import lucidity_tenant.x AWS/123456789012` (provider/account-id).
@@ -267,15 +340,47 @@ until first apply.
 
 ### Data source `lucidity_tenants`
 
-Wraps GET /external/client/api/v1/tenants; exposes status per tenant. Enables
-the "desired vs actual" output pattern (Output 3 in planning).
+Wraps `GET /external/client/api/v1/tenants`; response is `{tenants: [...],
+meta: {totalCount}}` (object wrapper, not a bare array — deliberately
+future-proofed for pagination without breaking clients, per the doc).
+Results ordered ACTIVE first, then INACTIVE. Item fields: `tenantId`,
+`cloudProvider`, `cloudProviderAccountId`, `cloudEntityName` (new,
+provider-side account name), `displayName`, `status`. Exposes status per
+tenant. Enables the "desired vs actual" output pattern (Output 3 in
+planning). Live-confirmed 2026-09-06 against a real account (`LucidityPLS`)
+— response shape matches this exactly.
+
+### Live API testing notes (2026-09-06)
+
+Tested against `LucidityPLS` (`dashboard-azurepls.lucidity.cloud`) using two
+refresh tokens confirmed to belong to the same account (identical 3-tenant
+list from both — a useful confirmation, though not a general account-
+identity mechanism).
+
+- List response shape, and all 10 invalid-onboard-input scenarios (missing
+  `cloudEntityInformation`; blank `cloudProvider`/`cloudProviderAccountId`/
+  `displayName`/`externalId`/`awsIAMRoleName`/`awsIAMPolicyName`; non-AWS
+  provider; empty/invalid `productList`) — all confirmed matching the doc's
+  `400 INVALID_REQUEST` behavior (one cosmetic wording difference: the
+  invalid-product-value message is `"X" is not a supported product.` rather
+  than the doc's paraphrase — same code/behavior).
+- A rejected onboard attempt leaves no orphaned/partial tenant record.
+- **Not yet tested:** a full real onboard→update→deboard→re-onboard-conflict
+  cycle. Dummy AWS account numbers can't complete it — see the
+  `skip_cloud_permission_check` note above. Deferred until a real,
+  disposable AWS account with an actually-assumable IAM role is available.
+- **No account-identity signal found anywhere** — checked response headers
+  and bodies across every call made. Directly blocks implementing the
+  `account_name` validation from the Phase 1 provider config block above.
 
 ## Testing conventions
 
 - Unit tests: mock server, recorded envelopes, cover INACTIVE / NOT_FOUND /
   permission-failure / expired-token cases. Run on every PR.
 - Acceptance tests (TF_ACC=1): maintainer's sandbox accounts, treated as live.
-  AWS first; Azure/GCP schema support ships in v0.1.0 regardless.
+  AWS first (onboarding is AWS-only per the current API); Azure/GCP schema
+  support (List/Deboard/Update already accept all three providers) ships in
+  Phase 2 regardless of onboard's AWS-only limitation.
 - Destroy-path tests: protection-error and forget paths run freely; the
   actual-deboard test is separately tagged and run deliberately (sandbox
   tenants burn permanently on each deboard).
@@ -284,12 +389,28 @@ the "desired vs actual" output pattern (Output 3 in planning).
 
 1. ~~CONFLICT error-code semantics~~ **Resolved 2026-09-06:** "Already a
    tenant exists with the provided details." See the client.go bullet above.
-2. Whether update APIs' `Account` param is derivable from token.
-3. Onboard re-trigger response shape for existing ACTIVE tenant (201 vs 200?);
-   skipCloudPermissionCheck semantics on re-trigger; failure atomicity.
-4. Rate limits / parallel-onboard safety on Lucidity side.
-5. Long-term: OIDC workload identity (proposal in docs/lucidity-oidc-proposal.md;
-   future `use_oidc = true` provider mode).
+2. ~~Whether update APIs' `Account` param is derivable from token~~
+   **Resolved 2026-09-06:** moot — the real update API (`PATCH /tenants`)
+   has no Account param at all; see "Update APIs" under Phase 2.
+3. ~~Onboard re-trigger response shape for existing ACTIVE tenant~~
+   **Resolved 2026-09-06:** no re-trigger exists — onboard is create-only,
+   an existing tenant (ACTIVE or INACTIVE) always gets `409 CONFLICT`.
+4. ~~Rate limits / parallel-onboard safety on Lucidity side~~ **Resolved
+   2026-09-06:** 10 concurrent requests supported — already matches the
+   existing `max_parallel_requests` default, no code change needed. Avoid
+   two concurrent operations against the *same* account/tenant; Terraform's
+   own per-resource-instance serialization already prevents this for normal
+   `lucidity_tenant` usage.
+5. **`account_name` validation mechanism** (new 2026-09-06): no endpoint
+   found that identifies which dashboard account a token belongs to —
+   checked response headers and bodies across refresh/list/onboard calls.
+   Blocks implementing the cross-validation Configure() is supposed to do.
+   Needs either a Lucidity-provided endpoint or an alternative signal.
+6. **Full destructive-cycle confirmation** (new 2026-09-06): a real
+   onboard→update→deboard→re-onboard-conflict cycle hasn't been exercised —
+   dummy AWS account numbers fail cloud-account validation regardless of
+   `skipCloudPermissionCheck`. Deferred until a real, disposable AWS account
+   with an actually-assumable IAM role is available.
 
 ## Style
 
