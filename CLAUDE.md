@@ -224,23 +224,50 @@ Created`. Deboard endpoint: `PUT /external/client/api/v1/tenants/deboard` →
 
 ### `lucidity_tenant` resource
 
-- One resource per cloud account. Onboarding is AWS-only today (Azure/GCP
-  return `400 INVALID_REQUEST`); List/Deboard/Update accept all three
-  providers. See `docs/examples/lucidity-tenants.tf` for plain,
+- One resource per cloud account. Onboarding (Create) is AWS-only today
+  (Azure/GCP return `400 INVALID_REQUEST`); List/Deboard/Update accept all
+  three providers. See `docs/examples/lucidity-tenants.tf` for plain,
   non-abstracted example usage — one explicit resource block per account, no
   locals map/for_each (the maintainer explicitly rejected a JSON-like
   grouping structure here, twice, in favor of writing it "as per terraform").
+- **Multi-cloud support (added 2026-09-07):** `cloud_provider` accepts `AWS`,
+  `AZURE`, or `GCP` at the schema level. Since Create() only ever handles
+  AWS, an AZURE/GCP resource can only enter Terraform via `terraform import`
+  of a tenant that already exists on Lucidity some other way — Create()
+  itself rejects a non-AWS `cloud_provider` outright with a clear error
+  pointing at import, before making any API call. `cloud_provider_account_id`
+  holds whichever identifier that provider uses: AWS account ID, Azure
+  subscription ID (or name), or GCP project ID.
+  - The AWS-only fields (`aws_iam_external_id`, `aws_iam_role_name`,
+    `aws_iam_policy_name`, `lucidity_product_list`) are `Optional` at the
+    schema level, not `Required` — a blanket `Required` would force every
+    AZURE/GCP resource to fill in meaningless AWS IAM fields just to
+    validate. Instead, a `ResourceWithValidateConfig.ValidateConfig`
+    implementation enforces "if `cloud_provider == AWS`, these must be set"
+    as a conditional invariant, checked on every plan.
+  - New `azure_service_principal_id`/`azure_directory_id` fields (in
+    `cloud_entity_information`, both optional, both updatable in-place) —
+    match the real Update API's AZURE fields. Not usable at onboard time
+    (Azure onboarding isn't supported); only meaningful for updating an
+    imported AZURE tenant.
+  - GCP's real Update API only accepts `displayName` — no GCP-specific auth
+    fields exist to add.
 - Computed attributes: `tenant_id`, `status`. New (2026-09-06):
   `cloud_entity_name` should also become computed — the provider-side
   account name, only available from List, not from onboard's response.
-- Required, non-empty list attribute: `lucidity_product_list` (new field, not in
-  earlier planning). Only `AUTOSCALER` is valid today — recommend validating
-  it as a closed set the same way `lucidity_dashboard_url` is
-  (`stringvalidator`-style), consistent with this project's established
+- Non-empty list attribute (**required for AWS only**, enforced via
+  `ValidateConfig` — see above, not schema `Required`): `lucidity_product_list`
+  (new field, not in earlier planning). Only `AUTOSCALER` is valid today —
+  recommend validating it as a closed set the same way `lucidity_dashboard_url`
+  is (`stringvalidator`-style), consistent with this project's established
   philosophy. Request field is `productList`; the onboard *response* field
   is `products` (different name) — don't conflate the two in Go struct tags.
-- `aws_iam_external_id` (in `cloud_entity_information`, **required** — AWS onboarding
-  has no optional case today): a value the practitioner generates (a UUID
+  Not accepted by Update for any provider, and never returned by List, so it
+  can't be recovered by import either.
+- `aws_iam_external_id` (in `cloud_entity_information`, **required for AWS
+  onboarding, `Optional` at the schema level** — enforced via `ValidateConfig`
+  instead, so AZURE/GCP resources aren't forced to set it): a value the
+  practitioner generates (a UUID
   works) and places in the target IAM role's trust policy; Lucidity sends it
   on every `AssumeRole`. **Write-only on the real API** — never returned by
   onboard, update, or list responses, and update silently keeps the
