@@ -30,7 +30,7 @@ func tenantConfigType() tftypes.Object {
 			"cloud_entity_information":                     cloudEntityInformationType(),
 			"lucidity_dashboard_display_name":              tftypes.String,
 			"lucidity_product_list":                        tftypes.List{ElementType: tftypes.String},
-			"aws_root_account_id":                          tftypes.String,
+			"aws_org_root_id":                              tftypes.String,
 			"skip_cloud_permission_check":                  tftypes.Bool,
 			"lucidity_dashboard_account_delete_protection": tftypes.Bool,
 			"lucidity_account_destroy_behavior":            tftypes.String,

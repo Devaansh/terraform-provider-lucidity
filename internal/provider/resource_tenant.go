@@ -56,7 +56,7 @@ type tenantResourceModel struct {
 	CloudEntityInformation   cloudEntityInformationModel `tfsdk:"cloud_entity_information"`
 	DisplayName              types.String                `tfsdk:"lucidity_dashboard_display_name"`
 	ProductList              types.List                  `tfsdk:"lucidity_product_list"`
-	AWSRootID                types.String                `tfsdk:"aws_root_account_id"`
+	AWSRootID                types.String                `tfsdk:"aws_org_root_id"`
 	SkipCloudPermissionCheck types.Bool                  `tfsdk:"skip_cloud_permission_check"`
 	AccountDeleteProtection  types.Bool                  `tfsdk:"lucidity_dashboard_account_delete_protection"`
 	DestroyBehavior          types.String                `tfsdk:"lucidity_account_destroy_behavior"`
@@ -144,7 +144,7 @@ func (r *tenantResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Required:    true,
 				Description: "The name this tenant shows under in your Lucidity dashboard. Updatable in-place at any time.",
 			},
-			"aws_root_account_id": schema.StringAttribute{
+			"aws_org_root_id": schema.StringAttribute{
 				Optional: true,
 				Description: "The AWS Organization root/management account ID for the account being onboarded. Sent to Lucidity on onboard when set, best-effort — it is NOT part of the documented onboard/update request schema (absent from both field tables in Lucidity's Public Tenant API doc), so Lucidity may silently ignore it, or reject the call outright if it validates request bodies strictly. " +
 					"Not used for grouping or resolution: the tenant is always identified purely by cloud_provider + cloud_provider_account_id. Useful for audits and for cases where a shared IAM role/policy is assumed across multiple member accounts under the same org. " +
@@ -293,7 +293,7 @@ func (r *tenantResource) ImportState(ctx context.Context, req resource.ImportSta
 
 	resp.Diagnostics.AddWarning(
 		"Some lucidity_tenant fields cannot be recovered by import",
-		"aws_iam_external_id, aws_root_account_id, lucidity_product_list, and skip_cloud_permission_check are never returned by Lucidity's List API (aws_iam_external_id and aws_root_account_id are write-only; the others simply aren't exposed there), so this import cannot populate them. "+
+		"aws_iam_external_id, aws_org_root_id, lucidity_product_list, and skip_cloud_permission_check are never returned by Lucidity's List API (aws_iam_external_id and aws_org_root_id are write-only; the others simply aren't exposed there), so this import cannot populate them. "+
 			"Write a resource block with the real values that match this account's actual configuration. aws_iam_role_name, aws_iam_policy_name, azure_service_principal_id, azure_directory_id, and lucidity_dashboard_display_name will reconcile safely via a normal update on the next apply if they don't match. "+
 			"aws_iam_external_id and lucidity_product_list are NOT updatable, though: if the value you write doesn't match reality, the next apply will force a destroy-and-recreate of this tenant (deboarding is IRREVERSIBLE) rather than silently drifting. Review carefully before applying. "+
 			"For an AZURE or GCP tenant, leave the AWS-only fields (aws_iam_external_id, aws_iam_role_name, aws_iam_policy_name) unset entirely — they're only required when cloud_provider is AWS.",
@@ -422,7 +422,7 @@ func (r *tenantResource) Update(ctx context.Context, req resource.UpdateRequest,
 	cloudProvider := plan.CloudEntityInformation.CloudProvider.ValueString()
 	accountID := plan.CloudEntityInformation.CloudProviderAccountID.ValueString()
 
-	// aws_root_account_id has no update path — documented or otherwise — and no
+	// aws_org_root_id has no update path — documented or otherwise — and no
 	// server-side value to reconcile against (it's not part of the real API
 	// payload's response either). RequiresReplace would force a full
 	// deboard/re-onboard cycle just to change a local metadata note, which
@@ -430,9 +430,9 @@ func (r *tenantResource) Update(ctx context.Context, req resource.UpdateRequest,
 	// explicitly instead of silently dropping the change or forcing replace.
 	if !plan.AWSRootID.Equal(state.AWSRootID) {
 		resp.Diagnostics.AddAttributeError(
-			path.Root("aws_root_account_id"),
-			"aws_root_account_id cannot be modified",
-			"Changing aws_root_account_id after onboarding is not supported in this release — Lucidity has no update mechanism for it. "+
+			path.Root("aws_org_root_id"),
+			"aws_org_root_id cannot be modified",
+			"Changing aws_org_root_id after onboarding is not supported in this release — Lucidity has no update mechanism for it. "+
 				"Revert it to its current value. If it truly must change, that requires destroying and re-creating this resource "+
 				"(mind lucidity_dashboard_account_delete_protection and lucidity_account_destroy_behavior — deboarding is irreversible). A future release may add real update support.",
 		)

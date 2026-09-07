@@ -64,7 +64,7 @@ resource "lucidity_tenant" "non_prod_3" {
 
 # ─── qa ──────────────────────────────────────────────────────────────────────
 # Both accounts below assume the same shared IAM role/policy under one AWS
-# Organization — aws_root_account_id records which org root they roll up to, for
+# Organization — aws_org_root_id records which org root they roll up to, for
 # audit purposes. It is sent to Lucidity best-effort but isn't part of the
 # documented API (see CLAUDE.md) and isn't used for grouping or resolution —
 # the tenant is still identified purely by cloud_provider +
@@ -73,7 +73,7 @@ resource "lucidity_tenant" "non_prod_3" {
 resource "lucidity_tenant" "qa_1" {
   lucidity_dashboard_display_name = "qa"
   lucidity_product_list           = ["AUTOSCALER"]
-  aws_root_account_id             = "999999999999"
+  aws_org_root_id                 = "999999999999"
 
   cloud_entity_information {
     cloud_provider            = "AWS"
@@ -89,7 +89,7 @@ resource "lucidity_tenant" "qa_1" {
 resource "lucidity_tenant" "qa_2" {
   lucidity_dashboard_display_name = "qa"
   lucidity_product_list           = ["AUTOSCALER"]
-  aws_root_account_id             = "999999999999"
+  aws_org_root_id                 = "999999999999"
 
   cloud_entity_information {
     cloud_provider            = "AWS"

@@ -198,9 +198,9 @@ Phase 1 definition of done:
    Hardcoding in .tf: documented as never-do.
    **Done (2026-09-06):** all four backend recipes, both attribute- and
    data-source-fed options per backend, and the tfvars/hardcoding guidance
-   are in the README's "Supplying the refresh token" section. Still missing:
-   a real `tfplugindocs`-generated docs page — deferred with the `examples/`
-   directory to Phase 2 (see the Style section note below).
+   are in the README's "Supplying the refresh token" section. **Done
+   (2026-09-07):** the `tfplugindocs`-generated docs page too — see the Style
+   section note below.
 
 ### Required error message (401 / expired refresh token)
 
@@ -279,7 +279,7 @@ Created`. Deboard endpoint: `PUT /external/client/api/v1/tenants/deboard` →
   `terraform import` cannot recover this value (nor can any Read); the
   practitioner must supply the real one matching the account's trust policy,
   or the very next apply forces a replace.
-- `aws_root_account_id` (re-added 2026-09-07, **optional**, top-level attribute —
+- `aws_org_root_id` (re-added 2026-09-07, **optional**, top-level attribute —
   sibling of `lucidity_dashboard_display_name`/`lucidity_product_list`, NOT nested inside
   `cloud_entity_information`, per the maintainer's explicit placement in the
   approved reference example): the AWS Organization root/management account
@@ -503,7 +503,7 @@ identity mechanism).
    provider with the reference example, plus mock-server unit tests) — this
    item is specifically about confirming real API behavior end-to-end, not
    about whether the Go code exists.
-7. **`aws_root_account_id` on the real onboard payload** (new 2026-09-07): sent
+7. **`aws_org_root_id` on the real onboard payload** (new 2026-09-07): sent
    best-effort per the maintainer's explicit instruction, but the current
    Public Tenant API doc has no such field in its onboard request table —
    unverified whether Lucidity silently ignores it, silently drops it, or
@@ -517,9 +517,14 @@ identity mechanism).
 - Diagnostics are actionable: name the attribute/env var/next step, include
   requestId on API failures.
 - Generate docs with tfplugindocs from schema descriptions + examples/.
-  Note: the repo has no `examples/` directory right now — it was removed
-  along with the Phase-2-only reference config (moved to
-  `docs/examples/lucidity-tenants.tf`, plain documentation, not wired into
-  any tooling). tfplugindocs' own convention (`examples/resources/<name>/resource.tf`,
-  etc.) needs a real `examples/` directory recreated once Phase 2 adds
-  `lucidity_tenant` — this note exists so that doesn't get missed.
+  **Done (2026-09-07):** `examples/provider/provider.tf`,
+  `examples/resources/lucidity_tenant/{resource.tf,import.sh}`, and
+  `examples/data-sources/lucidity_tenants/data-source.tf` recreated per
+  tfplugindocs' convention; `tfplugindocs generate --provider-name lucidity`
+  run to produce `docs/index.md`, `docs/resources/tenant.md`, and
+  `docs/data-sources/tenants.md`. `docs/examples/lucidity-tenants.tf` stays
+  as-is — a separate, more elaborate multi-account reference config, not
+  wired into tfplugindocs. Re-run `tfplugindocs generate` after any schema
+  or `examples/` change; nothing currently does this automatically (no
+  `go generate` directive, no CI step) — that's a reasonable follow-up if
+  docs start drifting from schema in practice.
