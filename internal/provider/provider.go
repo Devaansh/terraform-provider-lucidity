@@ -1,6 +1,6 @@
-// Package provider implements the Lucidity Terraform provider. Phase 1
-// wires up authentication only; the lucidity_tenant resource and
-// lucidity_tenants data source land in Phase 2 (see CLAUDE.md).
+// Package provider implements the Lucidity Terraform provider: Phase 1's
+// authentication layer, plus Phase 2's lucidity_tenant resource and
+// lucidity_tenants data source (see CLAUDE.md for the full design record).
 package provider
 
 import (
@@ -38,13 +38,13 @@ type LucidityProvider struct {
 }
 
 type lucidityProviderModel struct {
-	RefreshToken               types.String `tfsdk:"refresh_token"`
-	RefreshTokenFile           types.String `tfsdk:"refresh_token_file"`
-	RefreshTokenCommand        types.String `tfsdk:"refresh_token_command"`
-	DashboardLoginURL          types.String `tfsdk:"dashboard_login_url"`
-	MaxParallelRequests        types.Int64  `tfsdk:"max_parallel_requests"`
-	ProactiveRefreshBufferMins types.Int64  `tfsdk:"proactive_refresh_buffer_minutes"`
-	AccountName                types.String `tfsdk:"account_name"`
+	RefreshToken                 types.String `tfsdk:"refresh_token"`
+	RefreshTokenFile             types.String `tfsdk:"refresh_token_file"`
+	RefreshTokenCommand          types.String `tfsdk:"refresh_token_command"`
+	LucidityDashboardURL         types.String `tfsdk:"lucidity_dashboard_url"`
+	MaxParallelRequests          types.Int64  `tfsdk:"max_parallel_requests"`
+	ProactiveRefreshBufferMins   types.Int64  `tfsdk:"proactive_refresh_buffer_minutes"`
+	LucidityDashboardAccountName types.String `tfsdk:"lucidity_dashboard_account_name"`
 }
 
 // LucidityClients bundles the API client made available to resources and
@@ -84,11 +84,11 @@ func (p *LucidityProvider) Schema(_ context.Context, _ provider.SchemaRequest, r
 				Optional:    true,
 				Description: "Shell command whose trimmed stdout is used as the Lucidity refresh token, e.g. `vault kv get -field=token secret/lucidity`. Runs via the platform shell with a 30s timeout; stdout is never logged, including at TF_LOG=DEBUG. Exactly one of refresh_token, refresh_token_file, or refresh_token_command may be set.",
 			},
-			"dashboard_login_url": schema.StringAttribute{
+			"lucidity_dashboard_url": schema.StringAttribute{
 				Required:    true,
-				Description: fmt.Sprintf("The URL you use to log in to the Lucidity dashboard. Determines the API base URL the provider talks to — there is no separate base-URL setting. Must be exactly one of: %s.", strings.Join(validDashboardLoginURLs(), ", ")),
+				Description: fmt.Sprintf("The URL you use to log in to the Lucidity dashboard. Determines the API base URL the provider talks to — there is no separate base-URL setting. Must be exactly one of: %s.", strings.Join(validLucidityDashboardURLs(), ", ")),
 				Validators: []validator.String{
-					stringvalidator.OneOf(validDashboardLoginURLs()...),
+					stringvalidator.OneOf(validLucidityDashboardURLs()...),
 				},
 			},
 			"max_parallel_requests": schema.Int64Attribute{
@@ -110,9 +110,9 @@ func (p *LucidityProvider) Schema(_ context.Context, _ provider.SchemaRequest, r
 					int64validator.Between(1, int64(client.AccessTokenTTL.Minutes())-1),
 				},
 			},
-			"account_name": schema.StringAttribute{
-				Optional:    true,
-				Description: "Lucidity dashboard account name. Reserved for Phase 2 tenant display-name updates; unused in Phase 1.",
+			"lucidity_dashboard_account_name": schema.StringAttribute{
+				Required:    true,
+				Description: "The Lucidity dashboard account this refresh token is expected to belong to. Intended to catch a wrong-account refresh token before any tenant operation runs; the provider cannot yet cross-validate this against the token itself (no Lucidity endpoint currently exposes which account a token belongs to — see CLAUDE.md open questions), so today this is recorded but not enforced.",
 			},
 		},
 	}
@@ -145,15 +145,15 @@ func (p *LucidityProvider) Configure(ctx context.Context, req provider.Configure
 		return
 	}
 
-	baseURL, ok := apiBaseURLFor(data.DashboardLoginURL.ValueString())
+	baseURL, ok := apiBaseURLFor(data.LucidityDashboardURL.ValueString())
 	if !ok {
 		// Unreachable in practice: the OneOf validator already rejects any
 		// value not in knownDeployments before Configure runs. Kept as a
 		// defensive check in case the validator and that table ever drift.
 		resp.Diagnostics.AddAttributeError(
-			path.Root("dashboard_login_url"),
-			"Unknown dashboard_login_url",
-			fmt.Sprintf("%q is not a recognized Lucidity dashboard login URL.", data.DashboardLoginURL.ValueString()),
+			path.Root("lucidity_dashboard_url"),
+			"Unknown lucidity_dashboard_url",
+			fmt.Sprintf("%q is not a recognized Lucidity dashboard login URL.", data.LucidityDashboardURL.ValueString()),
 		)
 		return
 	}
@@ -183,11 +183,13 @@ func (p *LucidityProvider) Configure(ctx context.Context, req provider.Configure
 }
 
 func (p *LucidityProvider) Resources(_ context.Context) []func() resource.Resource {
-	// Phase 2: lucidity_tenant.
-	return nil
+	return []func() resource.Resource{
+		newTenantResource,
+	}
 }
 
 func (p *LucidityProvider) DataSources(_ context.Context) []func() datasource.DataSource {
-	// Phase 2: lucidity_tenants.
-	return nil
+	return []func() datasource.DataSource{
+		newTenantsDataSource,
+	}
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -66,6 +67,33 @@ func parseErrorBody(status int, body []byte) error {
 		HTTPStatus: status,
 		Code:       "UNKNOWN",
 		Message:    fmt.Sprintf("unexpected response body: %s", truncate(string(body), 500)),
+	}
+}
+
+// cloudAccountValidationErrorSubstring is the confirmed (live-tested
+// 2026-09-06) wording Lucidity uses for the "cloud account could not be
+// validated" 401, distinct from a bad/expired access token even though both
+// share HTTP 401 and error.code UNAUTHORIZED.
+const cloudAccountValidationErrorSubstring = "cloud account could not be validated"
+
+// cloudAccountValidationError returns the parsed APIError only when the 401
+// body is unambiguously the cloud-account-validation failure, so a genuine
+// bad/expired access token still falls through to AuthError's required
+// message. Returns nil for anything else, including an unparseable/empty
+// body (e.g. the plain 401 a bad token produces today).
+func cloudAccountValidationError(status int, body []byte) *APIError {
+	var env envelope
+	if err := json.Unmarshal(body, &env); err != nil || env.Error == nil {
+		return nil
+	}
+	if !strings.Contains(strings.ToLower(env.Error.Message), cloudAccountValidationErrorSubstring) {
+		return nil
+	}
+	return &APIError{
+		HTTPStatus: status,
+		Code:       env.Error.Code,
+		Message:    env.Error.Message,
+		RequestID:  env.RequestID,
 	}
 }
 
@@ -206,6 +234,18 @@ func (c *Client) Do(ctx context.Context, method, path string, body any, out any)
 			}
 			continue // single sanctioned retry, per CLAUDE.md — doesn't consume attempt
 		case status == http.StatusUnauthorized:
+			// Same HTTP status and error.code (UNAUTHORIZED) cover two
+			// unrelated conditions on tenant endpoints: a bad/expired access
+			// token (what AuthError's fixed, required message is for) and
+			// "the cloud account could not be validated" (a business-logic
+			// failure during onboard, per the Public Tenant API doc —
+			// distinguishable only by message text). Forcing a refresh above
+			// is harmless-but-wasted for the latter; what matters is not
+			// masking it behind the former's message and losing its
+			// requestId.
+			if apiErr := cloudAccountValidationError(status, respBody); apiErr != nil {
+				return apiErr
+			}
 			return AuthError{}
 		case status >= 500:
 			if attempt >= maxRetryAttempts-1 {

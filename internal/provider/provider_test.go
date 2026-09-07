@@ -18,9 +18,9 @@ import (
 // broken auth wiring. Exercising the RPCs directly is what actually proves
 // ConfigValidators and Configure behave correctly.
 
-// testDashboardLoginURL is a valid dashboard_login_url value for tests that
+// testLucidityDashboardURL is a valid lucidity_dashboard_url value for tests that
 // aren't specifically exercising deployment-selection behavior.
-const testDashboardLoginURL = "https://www.web.lucidity.dev/dashboard"
+const testLucidityDashboardURL = "https://www.web.lucidity.dev/dashboard"
 
 func providerConfigType() tftypes.Object {
 	return tftypes.Object{
@@ -28,10 +28,10 @@ func providerConfigType() tftypes.Object {
 			"refresh_token":                    tftypes.String,
 			"refresh_token_file":               tftypes.String,
 			"refresh_token_command":            tftypes.String,
-			"dashboard_login_url":              tftypes.String,
+			"lucidity_dashboard_url":           tftypes.String,
 			"max_parallel_requests":            tftypes.Number,
 			"proactive_refresh_buffer_minutes": tftypes.Number,
-			"account_name":                     tftypes.String,
+			"lucidity_dashboard_account_name":  tftypes.String,
 		},
 	}
 }
@@ -75,8 +75,9 @@ func hasErrorDiagnostic(diags []*tfprotov6.Diagnostic) bool {
 func TestProviderRPC_ValidateConfig_RejectsConflictingTokenSources(t *testing.T) {
 	srv := newTestProviderServer(t)
 	cfg := configValue(t, map[string]tftypes.Value{
-		"refresh_token":      strVal("direct-token"),
-		"refresh_token_file": strVal("token.txt"),
+		"refresh_token":                   strVal("direct-token"),
+		"lucidity_dashboard_account_name": strVal("Test Account"),
+		"refresh_token_file":              strVal("token.txt"),
 	})
 
 	resp, err := srv.ValidateProviderConfig(context.Background(), &tfprotov6.ValidateProviderConfigRequest{Config: cfg})
@@ -91,8 +92,9 @@ func TestProviderRPC_ValidateConfig_RejectsConflictingTokenSources(t *testing.T)
 func TestProviderRPC_ValidateConfig_AllowsExactlyOneTokenSource(t *testing.T) {
 	srv := newTestProviderServer(t)
 	cfg := configValue(t, map[string]tftypes.Value{
-		"refresh_token":       strVal("direct-token"),
-		"dashboard_login_url": strVal(testDashboardLoginURL),
+		"refresh_token":                   strVal("direct-token"),
+		"lucidity_dashboard_account_name": strVal("Test Account"),
+		"lucidity_dashboard_url":          strVal(testLucidityDashboardURL),
 	})
 
 	resp, err := srv.ValidateProviderConfig(context.Background(), &tfprotov6.ValidateProviderConfigRequest{Config: cfg})
@@ -104,11 +106,12 @@ func TestProviderRPC_ValidateConfig_AllowsExactlyOneTokenSource(t *testing.T) {
 	}
 }
 
-func TestProviderRPC_ValidateConfig_RejectsUnknownDashboardLoginURL(t *testing.T) {
+func TestProviderRPC_ValidateConfig_RejectsUnknownLucidityDashboardURL(t *testing.T) {
 	srv := newTestProviderServer(t)
 	cfg := configValue(t, map[string]tftypes.Value{
-		"refresh_token":       strVal("direct-token"),
-		"dashboard_login_url": strVal("https://not-a-real-lucidity-deployment.example.com"),
+		"refresh_token":                   strVal("direct-token"),
+		"lucidity_dashboard_account_name": strVal("Test Account"),
+		"lucidity_dashboard_url":          strVal("https://not-a-real-lucidity-deployment.example.com"),
 	})
 
 	resp, err := srv.ValidateProviderConfig(context.Background(), &tfprotov6.ValidateProviderConfigRequest{Config: cfg})
@@ -116,14 +119,15 @@ func TestProviderRPC_ValidateConfig_RejectsUnknownDashboardLoginURL(t *testing.T
 		t.Fatalf("ValidateProviderConfig: %v", err)
 	}
 	if !hasErrorDiagnostic(resp.Diagnostics) {
-		t.Fatalf("expected an error diagnostic for an unrecognized dashboard_login_url, got: %+v", resp.Diagnostics)
+		t.Fatalf("expected an error diagnostic for an unrecognized lucidity_dashboard_url, got: %+v", resp.Diagnostics)
 	}
 }
 
-func TestProviderRPC_ValidateConfig_RejectsMissingDashboardLoginURL(t *testing.T) {
+func TestProviderRPC_ValidateConfig_RejectsMissingLucidityDashboardURL(t *testing.T) {
 	srv := newTestProviderServer(t)
 	cfg := configValue(t, map[string]tftypes.Value{
-		"refresh_token": strVal("direct-token"),
+		"refresh_token":                   strVal("direct-token"),
+		"lucidity_dashboard_account_name": strVal("Test Account"),
 	})
 
 	resp, err := srv.ValidateProviderConfig(context.Background(), &tfprotov6.ValidateProviderConfigRequest{Config: cfg})
@@ -131,7 +135,7 @@ func TestProviderRPC_ValidateConfig_RejectsMissingDashboardLoginURL(t *testing.T
 		t.Fatalf("ValidateProviderConfig: %v", err)
 	}
 	if !hasErrorDiagnostic(resp.Diagnostics) {
-		t.Fatalf("expected an error diagnostic for a missing (required) dashboard_login_url, got: %+v", resp.Diagnostics)
+		t.Fatalf("expected an error diagnostic for a missing (required) lucidity_dashboard_url, got: %+v", resp.Diagnostics)
 	}
 }
 
@@ -152,8 +156,9 @@ func TestProviderRPC_Configure_ErrorsWithNoTokenSource(t *testing.T) {
 func TestProviderRPC_Configure_SucceedsWithDirectToken(t *testing.T) {
 	srv := newTestProviderServer(t)
 	cfg := configValue(t, map[string]tftypes.Value{
-		"refresh_token":       strVal("dummy-token"),
-		"dashboard_login_url": strVal(testDashboardLoginURL),
+		"refresh_token":                   strVal("dummy-token"),
+		"lucidity_dashboard_account_name": strVal("Test Account"),
+		"lucidity_dashboard_url":          strVal(testLucidityDashboardURL),
 	})
 
 	resp, err := srv.ConfigureProvider(context.Background(), &tfprotov6.ConfigureProviderRequest{Config: cfg})
@@ -165,14 +170,15 @@ func TestProviderRPC_Configure_SucceedsWithDirectToken(t *testing.T) {
 	}
 }
 
-func TestProviderRPC_Configure_MapsEveryKnownDashboardLoginURL(t *testing.T) {
+func TestProviderRPC_Configure_MapsEveryKnownLucidityDashboardURL(t *testing.T) {
 	for _, d := range knownDeployments {
 		d := d
-		t.Run(d.dashboardLoginURL, func(t *testing.T) {
+		t.Run(d.lucidityDashboardURL, func(t *testing.T) {
 			srv := newTestProviderServer(t)
 			cfg := configValue(t, map[string]tftypes.Value{
-				"refresh_token":       strVal("dummy-token"),
-				"dashboard_login_url": strVal(d.dashboardLoginURL),
+				"refresh_token":                   strVal("dummy-token"),
+				"lucidity_dashboard_account_name": strVal("Test Account"),
+				"lucidity_dashboard_url":          strVal(d.lucidityDashboardURL),
 			})
 
 			resp, err := srv.ConfigureProvider(context.Background(), &tfprotov6.ConfigureProviderRequest{Config: cfg})
@@ -193,7 +199,8 @@ func TestProviderRPC_ValidateConfig_AcceptsInRangeProactiveRefreshBuffer(t *test
 			srv := newTestProviderServer(t)
 			cfg := configValue(t, map[string]tftypes.Value{
 				"refresh_token":                    strVal("direct-token"),
-				"dashboard_login_url":              strVal(testDashboardLoginURL),
+				"lucidity_dashboard_account_name":  strVal("Test Account"),
+				"lucidity_dashboard_url":           strVal(testLucidityDashboardURL),
 				"proactive_refresh_buffer_minutes": numVal(minutes),
 			})
 
@@ -215,7 +222,8 @@ func TestProviderRPC_ValidateConfig_RejectsOutOfRangeProactiveRefreshBuffer(t *t
 			srv := newTestProviderServer(t)
 			cfg := configValue(t, map[string]tftypes.Value{
 				"refresh_token":                    strVal("direct-token"),
-				"dashboard_login_url":              strVal(testDashboardLoginURL),
+				"lucidity_dashboard_account_name":  strVal("Test Account"),
+				"lucidity_dashboard_url":           strVal(testLucidityDashboardURL),
 				"proactive_refresh_buffer_minutes": numVal(minutes),
 			})
 
@@ -235,8 +243,9 @@ func TestProviderRPC_Configure_SucceedsWithProactiveRefreshBufferUnset(t *testin
 	// cleanly, using client.DefaultProactiveRefreshAge.
 	srv := newTestProviderServer(t)
 	cfg := configValue(t, map[string]tftypes.Value{
-		"refresh_token":       strVal("dummy-token"),
-		"dashboard_login_url": strVal(testDashboardLoginURL),
+		"refresh_token":                   strVal("dummy-token"),
+		"lucidity_dashboard_account_name": strVal("Test Account"),
+		"lucidity_dashboard_url":          strVal(testLucidityDashboardURL),
 	})
 
 	resp, err := srv.ConfigureProvider(context.Background(), &tfprotov6.ConfigureProviderRequest{Config: cfg})
@@ -251,9 +260,10 @@ func TestProviderRPC_Configure_SucceedsWithProactiveRefreshBufferUnset(t *testin
 func TestProviderRPC_ValidateConfig_RejectsZeroMaxParallelRequests(t *testing.T) {
 	srv := newTestProviderServer(t)
 	cfg := configValue(t, map[string]tftypes.Value{
-		"refresh_token":         strVal("direct-token"),
-		"dashboard_login_url":   strVal(testDashboardLoginURL),
-		"max_parallel_requests": numVal(0),
+		"refresh_token":                   strVal("direct-token"),
+		"lucidity_dashboard_account_name": strVal("Test Account"),
+		"lucidity_dashboard_url":          strVal(testLucidityDashboardURL),
+		"max_parallel_requests":           numVal(0),
 	})
 
 	resp, err := srv.ValidateProviderConfig(context.Background(), &tfprotov6.ValidateProviderConfigRequest{Config: cfg})

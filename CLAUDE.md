@@ -15,15 +15,12 @@ revisit them without asking the maintainer.
   (auth refresh, getting started, Public Tenant API). Treat these as the source
   of truth for endpoints, fields, and error tables.
 
-## Current scope — PHASE 1: AUTH ONLY
+## Current scope — PHASE 1 (auth) + PHASE 2 (tenant resource), both shipped
 
-Build ONLY the auth layer now. Tenant resource/data source come in Phase 2.
-**Update (2026-09-06):** the update APIs shipped; Phase 2's design below has
-been reconciled against the real Tenant API doc and live-tested against a
-real account (see "Update APIs" and the live-testing notes under Phase 2).
-Phase 2 *implementation* has not started — this session was reconciliation
-and testing only, no `internal/provider` resource/data-source code exists
-yet. Phase 1 definition of done:
+**Update (2026-09-07):** Phase 2 is now implemented — see the "PHASE 2"
+section below for what shipped and what's still open (mainly: no live test
+of a full onboard→update→deboard cycle against a real AWS account yet).
+Phase 1 definition of done:
 - `terraform plan` with an empty config + provider block succeeds against sandbox.
   **Caveat (discovered 2026-08-21):** Terraform prunes a provider from the
   plan graph when nothing references it, so with zero resources/data sources
@@ -107,10 +104,10 @@ yet. Phase 1 definition of done:
      refresh_token         = "…"  # Sensitive, discouraged (ends up in .tf/state)
      refresh_token_file    = "…"  # Path to a file containing only the token
      refresh_token_command = "…"  # Shell command; trimmed stdout is used as the token
-     dashboard_login_url   = "…"  # REQUIRED, no default — must be one of the 5 known values below
+     lucidity_dashboard_url   = "…"  # REQUIRED, no default — must be one of the 5 known values below
      max_parallel_requests = 10   # optional, must be >= 1
      proactive_refresh_buffer_minutes = 3  # optional, 1-14, default 3 (renew at the 12-min mark)
-     account_name          = "…"  # REQUIRED (locked 2026-09-06) — see below
+     lucidity_dashboard_account_name = "…"  # REQUIRED (locked 2026-09-06, renamed 2026-09-07) — see below
    }
    ```
    **Token-source precedence (locked 2026-08-20):** exactly one of
@@ -128,7 +125,10 @@ yet. Phase 1 definition of done:
      whitespace/newline from stdout. Enforce a 30s timeout. Non-zero exit →
      surface stderr in the diagnostic. Never log stdout (it's the secret) —
      same scrubbing rule as access/refresh tokens elsewhere.
-   - `dashboard_login_url` (locked 2026-09-03): **required, no default.**
+   - `lucidity_dashboard_url` (locked 2026-09-03, renamed 2026-09-07 from
+     `dashboard_login_url` for clarity — the "lucidity_" prefix matches
+     `lucidity_dashboard_account_name` and makes it unambiguous this is a
+     Lucidity-specific setting, not a generic one): **required, no default.**
      Replaces the old optional/free-form `base_url` entirely — the maintainer
      chose a closed, validated set over a string the user could mistype into
      a working-looking but wrong host. A `stringvalidator.OneOf` rejects
@@ -158,20 +158,23 @@ yet. Phase 1 definition of done:
      Deliberately made user-configurable per the maintainer's explicit call,
      overriding the initial recommendation to keep it an internal-only
      constant (the margin is a client-side implementation detail, not
-     deployment-specific like `dashboard_login_url`) — kept here for the
+     deployment-specific like `lucidity_dashboard_url`) — kept here for the
      record in case it's revisited.
-   - `account_name` (locked 2026-09-06): **required.** The maintainer wants
-     `Configure()` to validate that the refresh token actually belongs to
-     the declared account — specifically to catch "wrong refresh token from
-     the wrong account" misconfiguration before any tenant operation runs.
-     **Blocked on a real gap, not yet implementable:** live-testing on
-     2026-09-06 checked response headers and bodies across refresh/list/
-     onboard calls and found no field or endpoint anywhere that identifies
-     which dashboard account a token belongs to. The `account_name`
-     attribute itself (required, plain string) can and does go in now; the
-     actual cross-validation logic cannot be written until either Lucidity
-     exposes such an endpoint or an alternative signal turns up. Track this
-     as the top open item below, not a silently-dropped requirement.
+   - `lucidity_dashboard_account_name` (locked 2026-09-06, renamed
+     2026-09-07 from `account_name` for clarity — the old name was
+     ambiguous against cloud/tenant account concepts): **required.** The
+     maintainer wants `Configure()` to validate that the refresh token
+     actually belongs to the declared account — specifically to catch
+     "wrong refresh token from the wrong account" misconfiguration before
+     any tenant operation runs. **Blocked on a real gap, not yet
+     implementable:** live-testing on 2026-09-06 checked response headers
+     and bodies across refresh/list/onboard calls and found no field or
+     endpoint anywhere that identifies which dashboard account a token
+     belongs to. The `lucidity_dashboard_account_name` attribute itself
+     (required, plain string) can and does go in now; the actual
+     cross-validation logic cannot be written until either Lucidity exposes
+     such an endpoint or an alternative signal turns up. Track this as the
+     top open item below, not a silently-dropped requirement.
 
    Rationale: rather than the provider baking in bespoke Vault/AWS-SM/
    Azure-KV/GCP-SM client integrations (real maintenance surface for a
@@ -185,9 +188,9 @@ yet. Phase 1 definition of done:
    token refresh, proactive renewal, single-flight, 401-retry, expired refresh
    token message, scrubbing (must cover `refresh_token_command` stdout too).
    Plus: multiple-sources-set → validator error; file read failure; command
-   non-zero exit; command timeout; every `dashboard_login_url` in the table
+   non-zero exit; command timeout; every `lucidity_dashboard_url` in the table
    maps to its correct `base_url`; an unrecognized or missing
-   `dashboard_login_url` is a validate-time error.
+   `lucidity_dashboard_url` is a validate-time error.
 6. Provider index docs covering all credential-supply options: env var (CI
    default), `refresh_token_file`, `refresh_token_command` (with per-backend
    recipes for Vault/AWS SM/Azure KV/GCP SM), data-source-fed `refresh_token`
@@ -205,9 +208,19 @@ yet. Phase 1 definition of done:
 > expired (default lifetime 30 days) and was not revoked. Generate a new token
 > from the Lucidity dashboard (Users → your admin user → Generate Token).
 
-## PHASE 2 (do NOT build yet) — locked design for the tenant resource
+## PHASE 2 — tenant resource (implemented 2026-09-07)
 
-Everything below is decided; implement when the maintainer says Phase 2 starts.
+Everything below is decided. **Implemented 2026-09-07:** `lucidity_tenant`
+(Create/Read/Update/Delete/Import) and `lucidity_tenants` live in
+`internal/provider/resource_tenant.go` / `datasource_tenants.go`, backed by
+`internal/client/tenant.go`. Verified via mock-server unit tests
+(`internal/client/tenant_test.go`, `internal/provider/resource_tenant_test.go`)
+and `terraform validate`/`plan` against the real compiled schema with
+`docs/examples/lucidity-tenants.tf` (dev-override, no live API calls — see
+Open Question #6 below for what's still untested against a real account).
+Onboard endpoint: `POST /external/client/api/v1/tenants/onboard` → `201
+Created`. Deboard endpoint: `PUT /external/client/api/v1/tenants/deboard` →
+`200 OK`. (List and Update's paths were already recorded above.)
 
 ### `lucidity_tenant` resource
 
@@ -222,16 +235,50 @@ Everything below is decided; implement when the maintainer says Phase 2 starts.
   account name, only available from List, not from onboard's response.
 - Required, non-empty list attribute: `product_list` (new field, not in
   earlier planning). Only `AUTOSCALER` is valid today — recommend validating
-  it as a closed set the same way `dashboard_login_url` is
+  it as a closed set the same way `lucidity_dashboard_url` is
   (`stringvalidator`-style), consistent with this project's established
   philosophy. Request field is `productList`; the onboard *response* field
   is `products` (different name) — don't conflate the two in Go struct tags.
-- `aws_root_id` **does not exist in the current API** (confirmed removed —
-  earlier planning had this field on the onboarding checklist from an older
-  doc version; the current onboard AND update field tables have no trace of
-  it). Never send it, never reference it.
+- `external_id` (in `cloud_entity_information`, **required** — AWS onboarding
+  has no optional case today): a value the practitioner generates (a UUID
+  works) and places in the target IAM role's trust policy; Lucidity sends it
+  on every `AssumeRole`. **Write-only on the real API** — never returned by
+  onboard, update, or list responses, and update silently keeps the
+  onboarding-time value forever regardless of what's sent (see "Update
+  APIs"). RequiresReplace: since this provider can never read back or verify
+  the true server-side value, any config change is modeled as a full
+  destroy+re-onboard rather than a silent no-op, which would risk state and
+  the real IAM trust policy quietly disagreeing. **Known import gap:**
+  `terraform import` cannot recover this value (nor can any Read); the
+  practitioner must supply the real one matching the account's trust policy,
+  or the very next apply forces a replace.
+- `aws_root_id` (re-added 2026-09-07, **optional**, top-level attribute —
+  sibling of `display_name`/`product_list`, NOT nested inside
+  `cloud_entity_information`, per the maintainer's explicit placement in the
+  approved reference example): the AWS Organization root/management account
+  ID for the account being onboarded. **Behavior changed 2026-09-07 per the
+  maintainer's explicit instruction: now sent to Lucidity on onboard when
+  set**, best-effort — it remains absent from both the onboard and update
+  field tables in the current Public Tenant API doc (confirmed again
+  2026-09-07 against the doc directly, not just the 2026-09-06 live-test
+  notes), so Lucidity may silently ignore it or, if it validates request
+  bodies strictly, reject the onboard call outright. This is a deliberate,
+  flagged risk, not an oversight — nothing about the current doc suggests
+  Lucidity accepts an extra field named `awsRootId`. **Not used for grouping
+  or resolution** — the tenant is still identified purely by `cloud_provider`
+  + `cloud_provider_account_id`. Useful for audits, and for cases where a
+  shared IAM role/policy is assumed across multiple member accounts under
+  the same org. **Cannot be modified once set:** there is no update
+  mechanism for it (documented or otherwise, and it's not returned by List
+  either), so `Update()` rejects a changed value with a plan-time error
+  rather than silently dropping it or forcing a replace (replacing over a
+  pure metadata field would mean an irreversible deboard/re-onboard cycle
+  for no functional reason). A future release may add real update support if
+  Lucidity ever documents a path for it.
 - Immutable (RequiresReplace, gated by protection below): `cloud_provider`,
-  `cloud_provider_account_id`.
+  `cloud_provider_account_id`, `external_id` (see above), `product_list`
+  (not listed as updatable in the real Update API's field table either —
+  see "Update APIs").
 - **Updates go through the real `PATCH /tenants` endpoint (see "Update
   APIs" below) — not onboard re-trigger.** Onboard is create-only; it does
   not support re-triggering at all (an existing tenant, ACTIVE or INACTIVE,
@@ -338,6 +385,17 @@ and error code, different meaning, only distinguishable by message text.
 Imported resources get account_delete_protection=true regardless of config
 until first apply.
 
+**Known gap, implemented as designed rather than hidden:** `external_id` and
+`product_list` are never returned by List (write-only / not exposed at all),
+so import cannot populate them — the practitioner must write a matching
+resource block, and since both are RequiresReplace, a value that doesn't
+match reality forces a destroy+recreate on the next apply rather than
+drifting silently. `aws_iam_role_name`, `aws_iam_policy_name`, and
+`display_name` reconcile safely instead: since they're real updatable
+fields, a mismatch after import just triggers a normal `Update()` call on
+the next apply. `ImportState` emits a warning listing all of this at import
+time.
+
 ### Data source `lucidity_tenants`
 
 Wraps `GET /external/client/api/v1/tenants`; response is `{tenants: [...],
@@ -371,7 +429,8 @@ identity mechanism).
   disposable AWS account with an actually-assumable IAM role is available.
 - **No account-identity signal found anywhere** — checked response headers
   and bodies across every call made. Directly blocks implementing the
-  `account_name` validation from the Phase 1 provider config block above.
+  `lucidity_dashboard_account_name` validation from the Phase 1 provider
+  config block above.
 
 ## Testing conventions
 
@@ -401,16 +460,28 @@ identity mechanism).
    two concurrent operations against the *same* account/tenant; Terraform's
    own per-resource-instance serialization already prevents this for normal
    `lucidity_tenant` usage.
-5. **`account_name` validation mechanism** (new 2026-09-06): no endpoint
-   found that identifies which dashboard account a token belongs to —
-   checked response headers and bodies across refresh/list/onboard calls.
-   Blocks implementing the cross-validation Configure() is supposed to do.
-   Needs either a Lucidity-provided endpoint or an alternative signal.
+5. **`lucidity_dashboard_account_name` validation mechanism** (new
+   2026-09-06, renamed 2026-09-07): no endpoint found that identifies which
+   dashboard account a token belongs to — checked response headers and
+   bodies across refresh/list/onboard calls. Blocks implementing the
+   cross-validation Configure() is supposed to do. Needs either a
+   Lucidity-provided endpoint or an alternative signal.
 6. **Full destructive-cycle confirmation** (new 2026-09-06): a real
    onboard→update→deboard→re-onboard-conflict cycle hasn't been exercised —
    dummy AWS account numbers fail cloud-account validation regardless of
    `skipCloudPermissionCheck`. Deferred until a real, disposable AWS account
-   with an actually-assumable IAM role is available.
+   with an actually-assumable IAM role is available. **Note (2026-09-07):**
+   the resource implementation itself is done and verified at the
+   schema/plan level (`terraform validate`/`plan` against the compiled
+   provider with the reference example, plus mock-server unit tests) — this
+   item is specifically about confirming real API behavior end-to-end, not
+   about whether the Go code exists.
+7. **`aws_root_id` on the real onboard payload** (new 2026-09-07): sent
+   best-effort per the maintainer's explicit instruction, but the current
+   Public Tenant API doc has no such field in its onboard request table —
+   unverified whether Lucidity silently ignores it, silently drops it, or
+   rejects the whole call. Needs a live onboard test (blocked on the same
+   real-AWS-account gap as #6) to know which.
 
 ## Style
 

@@ -1,11 +1,12 @@
 # terraform-provider-lucidity
 
-Terraform provider for Lucidity. Currently in Phase 1 (auth layer).
+Terraform provider for Lucidity: authentication (Phase 1) and the
+`lucidity_tenant` resource / `lucidity_tenants` data source (Phase 2).
 See [CLAUDE.md](CLAUDE.md) for the full design record and phase plan.
 
 - `docs/api/` — Lucidity API reference PDFs (source of truth)
 - `docs/lucidity-oidc-proposal.md` — OIDC proposal for the Lucidity team
-- `docs/examples/lucidity-tenants.tf` — target end-user configuration pattern (Phase 2)
+- `docs/examples/lucidity-tenants.tf` — reference tenant-management configuration
 
 This repo holds provider source only — no sample/testing Terraform configs.
 Published at `registry.terraform.io/Devaansh/lucidity`; pull it from there to
@@ -27,8 +28,9 @@ under each backend).
 
 ```hcl
 provider "lucidity" {
-  dashboard_login_url   = "https://www.web.lucidity.dev/dashboard"
-  refresh_token_command = "aws secretsmanager get-secret-value --secret-id lucidity/refresh-token --query SecretString --output text"
+  lucidity_dashboard_url          = "https://www.web.lucidity.dev/dashboard"
+  lucidity_dashboard_account_name = "Acme Corp"
+  refresh_token_command           = "aws secretsmanager get-secret-value --secret-id lucidity/refresh-token --query SecretString --output text"
 }
 ```
 
@@ -51,8 +53,9 @@ data "aws_secretsmanager_secret_version" "lucidity_refresh_token" {
 }
 
 provider "lucidity" {
-  dashboard_login_url = "https://www.web.lucidity.dev/dashboard"
-  refresh_token        = data.aws_secretsmanager_secret_version.lucidity_refresh_token.secret_string
+  lucidity_dashboard_url          = "https://www.web.lucidity.dev/dashboard"
+  lucidity_dashboard_account_name = "Acme Corp"
+  refresh_token                   = data.aws_secretsmanager_secret_version.lucidity_refresh_token.secret_string
 }
 ```
 
@@ -68,8 +71,9 @@ code in the provider, and the secret never lands in state.
 
 ```hcl
 provider "lucidity" {
-  dashboard_login_url   = "https://www.web.lucidity.dev/dashboard"
-  refresh_token_command = "vault kv get -field=token secret/lucidity"
+  lucidity_dashboard_url          = "https://www.web.lucidity.dev/dashboard"
+  lucidity_dashboard_account_name = "Acme Corp"
+  refresh_token_command           = "vault kv get -field=token secret/lucidity"
 }
 ```
 
@@ -85,8 +89,9 @@ Vault policy granting `read` on that KV path.
 
 ```hcl
 provider "lucidity" {
-  dashboard_login_url   = "https://web-azurepls.lucidity.cloud/dashboard"
-  refresh_token_command = "az keyvault secret show --vault-name my-vault --name lucidity-refresh-token --query value -o tsv"
+  lucidity_dashboard_url          = "https://web-azurepls.lucidity.cloud/dashboard"
+  lucidity_dashboard_account_name = "Acme Corp"
+  refresh_token_command           = "az keyvault secret show --vault-name my-vault --name lucidity-refresh-token --query value -o tsv"
 }
 ```
 
@@ -113,8 +118,9 @@ data "azurerm_key_vault_secret" "lucidity_refresh_token" {
 }
 
 provider "lucidity" {
-  dashboard_login_url = "https://web-azurepls.lucidity.cloud/dashboard"
-  refresh_token        = data.azurerm_key_vault_secret.lucidity_refresh_token.value
+  lucidity_dashboard_url          = "https://web-azurepls.lucidity.cloud/dashboard"
+  lucidity_dashboard_account_name = "Acme Corp"
+  refresh_token                   = data.azurerm_key_vault_secret.lucidity_refresh_token.value
 }
 ```
 
@@ -127,8 +133,9 @@ value is persisted to Terraform state as this data source's attribute.
 
 ```hcl
 provider "lucidity" {
-  dashboard_login_url   = "https://app.lucidity.cloud"
-  refresh_token_command = "gcloud secrets versions access latest --secret=lucidity-refresh-token"
+  lucidity_dashboard_url          = "https://app.lucidity.cloud"
+  lucidity_dashboard_account_name = "Acme Corp"
+  refresh_token_command           = "gcloud secrets versions access latest --secret=lucidity-refresh-token"
 }
 ```
 
@@ -148,8 +155,9 @@ data "google_secret_manager_secret_version" "lucidity_refresh_token" {
 }
 
 provider "lucidity" {
-  dashboard_login_url = "https://app.lucidity.cloud"
-  refresh_token        = data.google_secret_manager_secret_version.lucidity_refresh_token.secret_data
+  lucidity_dashboard_url          = "https://app.lucidity.cloud"
+  lucidity_dashboard_account_name = "Acme Corp"
+  refresh_token                   = data.google_secret_manager_secret_version.lucidity_refresh_token.secret_data
 }
 ```
 

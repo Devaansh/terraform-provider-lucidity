@@ -85,6 +85,48 @@ func TestClient_401RetryStillFails(t *testing.T) {
 	}
 }
 
+// TestClient_401CloudAccountValidationFailureSurfacesRealMessage guards
+// against masking a business-logic 401 ("the cloud account could not be
+// validated", per the Public Tenant API doc) behind AuthError's fixed
+// expired-refresh-token message, even though both share HTTP 401 and
+// error.code UNAUTHORIZED.
+func TestClient_401CloudAccountValidationFailureSurfacesRealMessage(t *testing.T) {
+	var refreshCalls int32
+	const wantMessage = "Authentication failed: the cloud account could not be validated."
+	srv := newMockServer(t, &refreshCalls, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(envelope{
+			Success:   false,
+			Error:     &envelopeError{Code: "UNAUTHORIZED", Message: wantMessage},
+			RequestID: "req-cloud-validation",
+		})
+	})
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "refresh-secret", WithHTTPClient(srv.Client()), withRetryBaseDelay(time.Millisecond))
+
+	err := c.Do(context.Background(), http.MethodPost, protectedPath, nil, nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if err.Error() == AuthFailedMessage {
+		t.Fatalf("got the generic AuthError message, want the real API message %q", wantMessage)
+	}
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("got error of type %T, want *APIError", err)
+	}
+	if apiErr.Message != wantMessage {
+		t.Fatalf("got message %q, want %q", apiErr.Message, wantMessage)
+	}
+	if apiErr.Code != "UNAUTHORIZED" {
+		t.Fatalf("got code %q, want UNAUTHORIZED", apiErr.Code)
+	}
+	if apiErr.RequestID != "req-cloud-validation" {
+		t.Fatalf("got requestId %q, want req-cloud-validation", apiErr.RequestID)
+	}
+}
+
 // TestClient_401OnFinalRetryAttemptStillRetriesWithFreshToken guards against
 // a bug where the 5xx-backoff budget and the one sanctioned 401-forced-refresh
 // retry shared a single bounded attempt counter: 3 straight 500s followed by

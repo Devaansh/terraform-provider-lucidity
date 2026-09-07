@@ -2,16 +2,16 @@ package provider
 
 // knownDeployment pairs a Lucidity Dashboard Login URL with the API Base URL
 // it maps to, per the Getting Started guide. This is the single source of
-// truth for both the dashboard_login_url validator and the actual base URL
+// truth for both the lucidity_dashboard_url validator and the actual base URL
 // used to build the API client.
 type knownDeployment struct {
-	dashboardLoginURL string
-	apiBaseURL        string
+	lucidityDashboardURL string
+	apiBaseURL           string
 }
 
 // knownDeployments lists every deployment Lucidity documents. There is no
 // free-form override: an undocumented deployment requires a provider update
-// to add it here, per the maintainer's choice to keep dashboard_login_url a
+// to add it here, per the maintainer's choice to keep lucidity_dashboard_url a
 // closed, validated set rather than an escape-hatch string.
 var knownDeployments = []knownDeployment{
 	{"https://www.web.lucidity.dev/dashboard", "https://dash-back.lucidity.dev"},
@@ -21,24 +21,24 @@ var knownDeployments = []knownDeployment{
 	{"https://eu.app.lucidity.cloud", "https://eu.app.lucidity.cloud"},
 }
 
-// validDashboardLoginURLs returns the allowed dashboard_login_url values, in
+// validLucidityDashboardURLs returns the allowed lucidity_dashboard_url values, in
 // the order declared above, for use with a OneOf schema validator.
-func validDashboardLoginURLs() []string {
+func validLucidityDashboardURLs() []string {
 	out := make([]string, len(knownDeployments))
 	for i, d := range knownDeployments {
-		out[i] = d.dashboardLoginURL
+		out[i] = d.lucidityDashboardURL
 	}
 	return out
 }
 
 // apiBaseURLFor looks up the API base URL for a dashboard login URL. Callers
 // can treat a false return as unreachable in practice — the OneOf validator
-// built from validDashboardLoginURLs rejects any other value before
+// built from validLucidityDashboardURLs rejects any other value before
 // Configure runs — but should still handle it rather than panic, in case the
 // validator and this table ever drift apart.
-func apiBaseURLFor(dashboardLoginURL string) (string, bool) {
+func apiBaseURLFor(lucidityDashboardURL string) (string, bool) {
 	for _, d := range knownDeployments {
-		if d.dashboardLoginURL == dashboardLoginURL {
+		if d.lucidityDashboardURL == lucidityDashboardURL {
 			return d.apiBaseURL, true
 		}
 	}
