@@ -233,13 +233,13 @@ Created`. Deboard endpoint: `PUT /external/client/api/v1/tenants/deboard` →
 - Computed attributes: `tenant_id`, `status`. New (2026-09-06):
   `cloud_entity_name` should also become computed — the provider-side
   account name, only available from List, not from onboard's response.
-- Required, non-empty list attribute: `product_list` (new field, not in
+- Required, non-empty list attribute: `lucidity_product_list` (new field, not in
   earlier planning). Only `AUTOSCALER` is valid today — recommend validating
   it as a closed set the same way `lucidity_dashboard_url` is
   (`stringvalidator`-style), consistent with this project's established
   philosophy. Request field is `productList`; the onboard *response* field
   is `products` (different name) — don't conflate the two in Go struct tags.
-- `external_id` (in `cloud_entity_information`, **required** — AWS onboarding
+- `aws_iam_external_id` (in `cloud_entity_information`, **required** — AWS onboarding
   has no optional case today): a value the practitioner generates (a UUID
   works) and places in the target IAM role's trust policy; Lucidity sends it
   on every `AssumeRole`. **Write-only on the real API** — never returned by
@@ -252,8 +252,8 @@ Created`. Deboard endpoint: `PUT /external/client/api/v1/tenants/deboard` →
   `terraform import` cannot recover this value (nor can any Read); the
   practitioner must supply the real one matching the account's trust policy,
   or the very next apply forces a replace.
-- `aws_root_id` (re-added 2026-09-07, **optional**, top-level attribute —
-  sibling of `display_name`/`product_list`, NOT nested inside
+- `aws_root_account_id` (re-added 2026-09-07, **optional**, top-level attribute —
+  sibling of `lucidity_dashboard_display_name`/`lucidity_product_list`, NOT nested inside
   `cloud_entity_information`, per the maintainer's explicit placement in the
   approved reference example): the AWS Organization root/management account
   ID for the account being onboarded. **Behavior changed 2026-09-07 per the
@@ -276,7 +276,7 @@ Created`. Deboard endpoint: `PUT /external/client/api/v1/tenants/deboard` →
   for no functional reason). A future release may add real update support if
   Lucidity ever documents a path for it.
 - Immutable (RequiresReplace, gated by protection below): `cloud_provider`,
-  `cloud_provider_account_id`, `external_id` (see above), `product_list`
+  `cloud_provider_account_id`, `aws_iam_external_id` (see above), `lucidity_product_list`
   (not listed as updatable in the real Update API's field table either —
   see "Update APIs").
 - **Updates go through the real `PATCH /tenants` endpoint (see "Update
@@ -287,7 +287,7 @@ Created`. Deboard endpoint: `PUT /external/client/api/v1/tenants/deboard` →
   restriction on how many fields you send in one call, and its old rationale
   (re-trigger only supported one field) no longer exists. `Update()` sends
   every changed field in a single `PATCH` call.
-- `display_name`: NEVER RequiresReplace, updatable in-place immediately —
+- `lucidity_dashboard_display_name`: NEVER RequiresReplace, updatable in-place immediately —
   the update API this was waiting on has shipped, so there's no "plan-time
   ERROR until the API ships" fallback path to build anymore.
 
@@ -301,9 +301,9 @@ the response message. Three-tier destroy behavior:
 
 | Config | `terraform destroy` result |
 |---|---|
-| `account_delete_protection = true` (DEFAULT) | Hard error before any API call |
-| protection=false, `destroy_behavior = "forget"` (default) | Remove from state only; tenant stays ACTIVE; warning emitted |
-| protection=false, `destroy_behavior = "deboard"` | Actual deboard call — the ONLY path to it |
+| `lucidity_dashboard_account_delete_protection = true` (DEFAULT) | Hard error before any API call |
+| protection=false, `lucidity_account_destroy_behavior = "forget"` (default) | Remove from state only; tenant stays ACTIVE; warning emitted |
+| protection=false, `lucidity_account_destroy_behavior = "deboard"` | Actual deboard call — the ONLY path to it |
 
 Carry loud warnings in: registry docs (admonition block), attribute
 descriptions, code comments above Delete(), and runtime diagnostics (even the
@@ -382,16 +382,16 @@ and error code, different meaning, only distinguishable by message text.
 ### Import
 
 `terraform import lucidity_tenant.x AWS/123456789012` (provider/account-id).
-Imported resources get account_delete_protection=true regardless of config
+Imported resources get lucidity_dashboard_account_delete_protection=true regardless of config
 until first apply.
 
-**Known gap, implemented as designed rather than hidden:** `external_id` and
-`product_list` are never returned by List (write-only / not exposed at all),
+**Known gap, implemented as designed rather than hidden:** `aws_iam_external_id` and
+`lucidity_product_list` are never returned by List (write-only / not exposed at all),
 so import cannot populate them — the practitioner must write a matching
 resource block, and since both are RequiresReplace, a value that doesn't
 match reality forces a destroy+recreate on the next apply rather than
 drifting silently. `aws_iam_role_name`, `aws_iam_policy_name`, and
-`display_name` reconcile safely instead: since they're real updatable
+`lucidity_dashboard_display_name` reconcile safely instead: since they're real updatable
 fields, a mismatch after import just triggers a normal `Update()` call on
 the next apply. `ImportState` emits a warning listing all of this at import
 time.
@@ -476,7 +476,7 @@ identity mechanism).
    provider with the reference example, plus mock-server unit tests) — this
    item is specifically about confirming real API behavior end-to-end, not
    about whether the Go code exists.
-7. **`aws_root_id` on the real onboard payload** (new 2026-09-07): sent
+7. **`aws_root_account_id` on the real onboard payload** (new 2026-09-07): sent
    best-effort per the maintainer's explicit instruction, but the current
    Public Tenant API doc has no such field in its onboard request table —
    unverified whether Lucidity silently ignores it, silently drops it, or

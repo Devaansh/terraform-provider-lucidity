@@ -44,19 +44,19 @@ type tenantResource struct {
 type cloudEntityInformationModel struct {
 	CloudProvider          types.String `tfsdk:"cloud_provider"`
 	CloudProviderAccountID types.String `tfsdk:"cloud_provider_account_id"`
-	ExternalID             types.String `tfsdk:"external_id"`
+	ExternalID             types.String `tfsdk:"aws_iam_external_id"`
 	AWSIAMRoleName         types.String `tfsdk:"aws_iam_role_name"`
 	AWSIAMPolicyName       types.String `tfsdk:"aws_iam_policy_name"`
 }
 
 type tenantResourceModel struct {
 	CloudEntityInformation   cloudEntityInformationModel `tfsdk:"cloud_entity_information"`
-	DisplayName              types.String                `tfsdk:"display_name"`
-	ProductList              types.List                  `tfsdk:"product_list"`
-	AWSRootID                types.String                `tfsdk:"aws_root_id"`
+	DisplayName              types.String                `tfsdk:"lucidity_dashboard_display_name"`
+	ProductList              types.List                  `tfsdk:"lucidity_product_list"`
+	AWSRootID                types.String                `tfsdk:"aws_root_account_id"`
 	SkipCloudPermissionCheck types.Bool                  `tfsdk:"skip_cloud_permission_check"`
-	AccountDeleteProtection  types.Bool                  `tfsdk:"account_delete_protection"`
-	DestroyBehavior          types.String                `tfsdk:"destroy_behavior"`
+	AccountDeleteProtection  types.Bool                  `tfsdk:"lucidity_dashboard_account_delete_protection"`
+	DestroyBehavior          types.String                `tfsdk:"lucidity_account_destroy_behavior"`
 	TenantID                 types.String                `tfsdk:"tenant_id"`
 	Status                   types.String                `tfsdk:"status"`
 	CloudEntityName          types.String                `tfsdk:"cloud_entity_name"`
@@ -83,7 +83,7 @@ func (r *tenantResource) Configure(_ context.Context, req resource.ConfigureRequ
 
 func (r *tenantResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Connects one cloud account to Lucidity as a managed tenant. One resource per cloud account — onboarding is AWS-only today (Azure/GCP are accepted by List/Deboard/Update but not by onboarding). Deboarding is IRREVERSIBLE via API: see account_delete_protection and destroy_behavior below before running terraform destroy.",
+		Description: "Connects one cloud account to Lucidity as a managed tenant. One resource per cloud account — onboarding is AWS-only today (Azure/GCP are accepted by List/Deboard/Update but not by onboarding). Deboarding is IRREVERSIBLE via API: see lucidity_dashboard_account_delete_protection and lucidity_account_destroy_behavior below before running terraform destroy.",
 		Blocks: map[string]schema.Block{
 			"cloud_entity_information": schema.SingleNestedBlock{
 				Description: "Cloud account identity and access details.",
@@ -105,7 +105,7 @@ func (r *tenantResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 							stringplanmodifier.RequiresReplace(),
 						},
 					},
-					"external_id": schema.StringAttribute{
+					"aws_iam_external_id": schema.StringAttribute{
 						Required: true,
 						Description: "A unique ID you generate and put in your IAM role's trust policy (a UUID works). Lucidity sends it on every AssumeRole so your role only trusts requests carrying it. " +
 							"Immutable forever once onboarded — Lucidity never returns this value again (write-only) and never applies a changed one via update, so this provider cannot detect drift on it and treats any config change as requiring a full replace (destroy + re-onboard). " +
@@ -126,17 +126,17 @@ func (r *tenantResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			},
 		},
 		Attributes: map[string]schema.Attribute{
-			"display_name": schema.StringAttribute{
+			"lucidity_dashboard_display_name": schema.StringAttribute{
 				Required:    true,
 				Description: "The name this tenant shows under in your Lucidity dashboard. Updatable in-place at any time.",
 			},
-			"aws_root_id": schema.StringAttribute{
+			"aws_root_account_id": schema.StringAttribute{
 				Optional: true,
 				Description: "The AWS Organization root/management account ID for the account being onboarded. Sent to Lucidity on onboard when set, best-effort — it is NOT part of the documented onboard/update request schema (absent from both field tables in Lucidity's Public Tenant API doc), so Lucidity may silently ignore it, or reject the call outright if it validates request bodies strictly. " +
 					"Not used for grouping or resolution: the tenant is always identified purely by cloud_provider + cloud_provider_account_id. Useful for audits and for cases where a shared IAM role/policy is assumed across multiple member accounts under the same org. " +
 					"Cannot be modified once set: there is no update mechanism for it (documented or otherwise), so changing this after creation is a plan-time error rather than a silent no-op or a forced replace. A future release may add real update support.",
 			},
-			"product_list": schema.ListAttribute{
+			"lucidity_product_list": schema.ListAttribute{
 				Required:    true,
 				ElementType: types.StringType,
 				Description: "Lucidity products to enable for this tenant. Only \"AUTOSCALER\" is supported today. Not updatable via any documented API — changing it forces a replace (re-onboard).",
@@ -156,19 +156,19 @@ func (r *tenantResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					"This ignores permission validation entirely — even if the account connects successfully, you may run into permission issues later on. " +
 					"Does NOT skip Lucidity's baseline cloud-account-reachability validation: an unreachable/invalid cloud account still fails onboarding regardless of this flag. Onboard-time only; not applied on update.",
 			},
-			"account_delete_protection": schema.BoolAttribute{
+			"lucidity_dashboard_account_delete_protection": schema.BoolAttribute{
 				Optional: true,
 				Computed: true,
 				Default:  booldefault.StaticBool(true),
 				Description: "DEFAULT true. When true, `terraform destroy` (or any change that would replace this resource) hard-errors before making any API call. " +
 					"Deboarding on Lucidity is IRREVERSIBLE via API: an INACTIVE tenant can only be reactivated by Lucidity support, and deboarding an account with running services causes immediate disruption. " +
-					"Set to false, and also set destroy_behavior explicitly, before destroying this resource.",
+					"Set to false, and also set lucidity_account_destroy_behavior explicitly, before destroying this resource.",
 			},
-			"destroy_behavior": schema.StringAttribute{
+			"lucidity_account_destroy_behavior": schema.StringAttribute{
 				Optional: true,
 				Computed: true,
 				Default:  stringdefault.StaticString("forget"),
-				Description: "Only consulted when account_delete_protection = false. \"forget\" (default): remove from Terraform state only — the tenant stays ACTIVE on Lucidity and continues to be managed/billed there. " +
+				Description: "Only consulted when lucidity_dashboard_account_delete_protection = false. \"forget\" (default): remove from Terraform state only — the tenant stays ACTIVE on Lucidity and continues to be managed/billed there. " +
 					"\"deboard\": actually call the deboard API — the ONLY path to it. This is IRREVERSIBLE via API.",
 				Validators: []validator.String{
 					stringvalidator.OneOf("forget", "deboard"),
@@ -208,17 +208,17 @@ func (r *tenantResource) ImportState(ctx context.Context, req resource.ImportSta
 
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("cloud_entity_information").AtName("cloud_provider"), cloudProvider)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("cloud_entity_information").AtName("cloud_provider_account_id"), accountID)...)
-	// Imported resources get account_delete_protection = true regardless of
+	// Imported resources get lucidity_dashboard_account_delete_protection = true regardless of
 	// whatever the eventual config says, until the first apply — per
 	// CLAUDE.md's locked Import design — so an import can never be
 	// immediately followed by an accidental destroy.
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("account_delete_protection"), true)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("lucidity_dashboard_account_delete_protection"), true)...)
 
 	resp.Diagnostics.AddWarning(
 		"Some lucidity_tenant fields cannot be recovered by import",
-		"external_id, aws_root_id, product_list, and skip_cloud_permission_check are never returned by Lucidity's List API (external_id and aws_root_id are write-only; the others simply aren't exposed there), so this import cannot populate them. "+
-			"Write a resource block with the real values that match this account's actual configuration. aws_iam_role_name, aws_iam_policy_name, and display_name will reconcile safely via a normal update on the next apply if they don't match. "+
-			"external_id and product_list are NOT updatable, though: if the value you write doesn't match reality, the next apply will force a destroy-and-recreate of this tenant (deboarding is IRREVERSIBLE) rather than silently drifting. Review carefully before applying.",
+		"aws_iam_external_id, aws_root_account_id, lucidity_product_list, and skip_cloud_permission_check are never returned by Lucidity's List API (aws_iam_external_id and aws_root_account_id are write-only; the others simply aren't exposed there), so this import cannot populate them. "+
+			"Write a resource block with the real values that match this account's actual configuration. aws_iam_role_name, aws_iam_policy_name, and lucidity_dashboard_display_name will reconcile safely via a normal update on the next apply if they don't match. "+
+			"aws_iam_external_id and lucidity_product_list are NOT updatable, though: if the value you write doesn't match reality, the next apply will force a destroy-and-recreate of this tenant (deboarding is IRREVERSIBLE) rather than silently drifting. Review carefully before applying.",
 	)
 }
 
@@ -332,7 +332,7 @@ func (r *tenantResource) Update(ctx context.Context, req resource.UpdateRequest,
 	cloudProvider := plan.CloudEntityInformation.CloudProvider.ValueString()
 	accountID := plan.CloudEntityInformation.CloudProviderAccountID.ValueString()
 
-	// aws_root_id has no update path — documented or otherwise — and no
+	// aws_root_account_id has no update path — documented or otherwise — and no
 	// server-side value to reconcile against (it's not part of the real API
 	// payload's response either). RequiresReplace would force a full
 	// deboard/re-onboard cycle just to change a local metadata note, which
@@ -340,11 +340,11 @@ func (r *tenantResource) Update(ctx context.Context, req resource.UpdateRequest,
 	// explicitly instead of silently dropping the change or forcing replace.
 	if !plan.AWSRootID.Equal(state.AWSRootID) {
 		resp.Diagnostics.AddAttributeError(
-			path.Root("aws_root_id"),
-			"aws_root_id cannot be modified",
-			"Changing aws_root_id after onboarding is not supported in this release — Lucidity has no update mechanism for it. "+
+			path.Root("aws_root_account_id"),
+			"aws_root_account_id cannot be modified",
+			"Changing aws_root_account_id after onboarding is not supported in this release — Lucidity has no update mechanism for it. "+
 				"Revert it to its current value. If it truly must change, that requires destroying and re-creating this resource "+
-				"(mind account_delete_protection and destroy_behavior — deboarding is irreversible). A future release may add real update support.",
+				"(mind lucidity_dashboard_account_delete_protection and lucidity_account_destroy_behavior — deboarding is irreversible). A future release may add real update support.",
 		)
 		return
 	}
@@ -375,8 +375,8 @@ func (r *tenantResource) Update(ctx context.Context, req resource.UpdateRequest,
 			return
 		}
 	}
-	// skip_cloud_permission_check, account_delete_protection, and
-	// destroy_behavior are local-only / onboard-only — no API call needed;
+	// skip_cloud_permission_check, lucidity_dashboard_account_delete_protection, and
+	// lucidity_account_destroy_behavior are local-only / onboard-only — no API call needed;
 	// the planned value is simply carried into state below.
 
 	if diags := r.refreshFromList(ctx, cloudProvider, accountID, &plan); diags.HasError() {
@@ -400,11 +400,11 @@ func (r *tenantResource) Delete(ctx context.Context, req resource.DeleteRequest,
 
 	if protected {
 		resp.Diagnostics.AddError(
-			"Destroy blocked by account_delete_protection",
+			"Destroy blocked by lucidity_dashboard_account_delete_protection",
 			fmt.Sprintf(
-				"Refusing to destroy lucidity_tenant for cloud account %s: account_delete_protection is true (the default). "+
+				"Refusing to destroy lucidity_tenant for cloud account %s: lucidity_dashboard_account_delete_protection is true (the default). "+
 					"Deboarding on Lucidity is IRREVERSIBLE via API — an INACTIVE tenant can only be reactivated by Lucidity support, and deboarding "+
-					"an account with running services causes immediate disruption. Set account_delete_protection = false and choose destroy_behavior "+
+					"an account with running services causes immediate disruption. Set lucidity_dashboard_account_delete_protection = false and choose lucidity_account_destroy_behavior "+
 					"explicitly to proceed.",
 				accountID,
 			),
@@ -417,7 +417,7 @@ func (r *tenantResource) Delete(ctx context.Context, req resource.DeleteRequest,
 			"Lucidity tenant left ACTIVE on Lucidity",
 			fmt.Sprintf(
 				"Removed cloud account %s from Terraform state without deboarding it — it remains ACTIVE on Lucidity and continues to be managed/billed there. "+
-					"Set destroy_behavior = \"deboard\" (with account_delete_protection = false) if you actually want it deboarded.",
+					"Set lucidity_account_destroy_behavior = \"deboard\" (with lucidity_dashboard_account_delete_protection = false) if you actually want it deboarded.",
 				accountID,
 			),
 		)
@@ -529,7 +529,7 @@ func handleOnboardError(diags *diag.Diagnostics, err error, accountID string) {
 				diags.AddError(
 					"Cloud account could not be validated",
 					fmt.Sprintf(
-						"Lucidity could not validate cloud account %s (requestId=%s): %s. Confirm the IAM role/policy and external_id are set up correctly in the target account's trust policy. "+
+						"Lucidity could not validate cloud account %s (requestId=%s): %s. Confirm the IAM role/policy and aws_iam_external_id are set up correctly in the target account's trust policy. "+
 							"skip_cloud_permission_check only bypasses Lucidity's permission check — it does NOT bypass this baseline reachability validation.",
 						accountID, apiErr.RequestID, apiErr.Message,
 					),
