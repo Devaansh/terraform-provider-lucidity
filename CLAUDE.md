@@ -224,9 +224,12 @@ Created`. Deboard endpoint: `PUT /external/client/api/v1/tenants/deboard` →
 
 ### `lucidity_tenant` resource
 
-- One resource per cloud account. Onboarding (Create) is AWS-only today
-  (Azure/GCP return `400 INVALID_REQUEST`); List/Deboard/Update accept all
-  three providers. See `docs/examples/lucidity-tenants.tf` for plain,
+- One resource per cloud account. Onboarding (Create) is AWS-only for now
+  (Azure/GCP onboarding isn't complete on Lucidity's side yet and returns
+  `400 INVALID_REQUEST` — confirmed by the maintainer 2026-09-07: full
+  Azure/GCP onboarding support is pending a future Lucidity release, not a
+  permanent restriction). List/Deboard/Update accept all three providers
+  already. See `docs/examples/lucidity-tenants.tf` for plain,
   non-abstracted example usage — one explicit resource block per account, no
   locals map/for_each (the maintainer explicitly rejected a JSON-like
   grouping structure here, twice, in favor of writing it "as per terraform").
@@ -297,11 +300,14 @@ Created`. Deboard endpoint: `PUT /external/client/api/v1/tenants/deboard` →
   shared IAM role/policy is assumed across multiple member accounts under
   the same org. **Cannot be modified once set:** there is no update
   mechanism for it (documented or otherwise, and it's not returned by List
-  either), so `Update()` rejects a changed value with a plan-time error
-  rather than silently dropping it or forcing a replace (replacing over a
-  pure metadata field would mean an irreversible deboard/re-onboard cycle
-  for no functional reason). A future release may add real update support if
-  Lucidity ever documents a path for it.
+  either), so a `ModifyPlan` implementation (moved there from `Update()` on
+  2026-09-07, specifically so this is caught at `terraform plan` time
+  instead of only surfacing once `apply` reaches `Update()`) rejects a
+  changed value with a plan-time error rather than silently dropping it or
+  forcing a replace (replacing over a pure metadata field would mean an
+  irreversible deboard/re-onboard cycle for no functional reason). **A
+  future release of this provider may add support for modifying it in
+  place**, if and when Lucidity ever documents a path for it.
 - Immutable (RequiresReplace, gated by protection below): `cloud_provider`,
   `cloud_provider_account_id`, `aws_iam_external_id` (see above), `lucidity_product_list`
   (not listed as updatable in the real Update API's field table either —

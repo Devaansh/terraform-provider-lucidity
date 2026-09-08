@@ -3,12 +3,12 @@
 page_title: "lucidity_tenant Resource - lucidity"
 subcategory: ""
 description: |-
-  Connects one cloud account to Lucidity as a managed tenant. One resource per cloud account. Onboarding (terraform apply creating a NEW resource) is AWS-only — Lucidity's API rejects Azure/GCP onboarding with 400 INVALID_REQUEST. AZURE and GCP tenants can still be managed here via terraform import (they already exist on Lucidity some other way): List, Update, and Deboard all accept every provider. Deboarding is IRREVERSIBLE via API: see lucidity_dashboard_account_delete_protection and lucidity_account_destroy_behavior below before running terraform destroy.
+  Connects one cloud account to Lucidity as a managed tenant. One resource per cloud account. Onboarding (terraform apply creating a NEW resource) is AWS-only for now — Lucidity's Azure/GCP onboarding API isn't complete yet and returns 400 INVALID_REQUEST; support is pending a future Lucidity release. AZURE and GCP tenants can still be managed here via terraform import (they already exist on Lucidity some other way): List, Update, and Deboard all accept every provider. Deboarding is IRREVERSIBLE via API: see lucidity_dashboard_account_delete_protection and lucidity_account_destroy_behavior below before running terraform destroy.
 ---
 
 # lucidity_tenant (Resource)
 
-Connects one cloud account to Lucidity as a managed tenant. One resource per cloud account. Onboarding (terraform apply creating a NEW resource) is AWS-only — Lucidity's API rejects Azure/GCP onboarding with 400 INVALID_REQUEST. AZURE and GCP tenants can still be managed here via terraform import (they already exist on Lucidity some other way): List, Update, and Deboard all accept every provider. Deboarding is IRREVERSIBLE via API: see lucidity_dashboard_account_delete_protection and lucidity_account_destroy_behavior below before running terraform destroy.
+Connects one cloud account to Lucidity as a managed tenant. One resource per cloud account. Onboarding (terraform apply creating a NEW resource) is AWS-only for now — Lucidity's Azure/GCP onboarding API isn't complete yet and returns 400 INVALID_REQUEST; support is pending a future Lucidity release. AZURE and GCP tenants can still be managed here via terraform import (they already exist on Lucidity some other way): List, Update, and Deboard all accept every provider. Deboarding is IRREVERSIBLE via API: see lucidity_dashboard_account_delete_protection and lucidity_account_destroy_behavior below before running terraform destroy.
 
 ## Example Usage
 
@@ -65,7 +65,7 @@ resource "lucidity_tenant" "example" {
 
 Required:
 
-- `cloud_provider` (String) AWS, AZURE, or GCP. Onboarding a brand-new resource is AWS-only (Azure/GCP return 400 INVALID_REQUEST) — an AZURE/GCP resource can only enter Terraform via `terraform import` of a tenant that already exists on Lucidity.
+- `cloud_provider` (String) AWS, AZURE, or GCP. Onboarding a brand-new resource is AWS-only for now (Azure/GCP onboarding isn't complete on Lucidity's side yet and returns 400 INVALID_REQUEST — pending a future Lucidity release) — an AZURE/GCP resource can only enter Terraform via `terraform import` of a tenant that already exists on Lucidity.
 - `cloud_provider_account_id` (String) The cloud's own identifier for the account: the AWS account ID, the Azure subscription ID (or subscription name), or the GCP project ID. Not a display name.
 
 Optional:

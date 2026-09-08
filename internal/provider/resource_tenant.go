@@ -28,6 +28,7 @@ var (
 	_ resource.ResourceWithConfigure      = &tenantResource{}
 	_ resource.ResourceWithImportState    = &tenantResource{}
 	_ resource.ResourceWithValidateConfig = &tenantResource{}
+	_ resource.ResourceWithModifyPlan     = &tenantResource{}
 )
 
 func newTenantResource() resource.Resource {
@@ -87,7 +88,7 @@ func (r *tenantResource) Configure(_ context.Context, req resource.ConfigureRequ
 func (r *tenantResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "Connects one cloud account to Lucidity as a managed tenant. One resource per cloud account. " +
-			"Onboarding (terraform apply creating a NEW resource) is AWS-only — Lucidity's API rejects Azure/GCP onboarding with 400 INVALID_REQUEST. " +
+			"Onboarding (terraform apply creating a NEW resource) is AWS-only for now — Lucidity's Azure/GCP onboarding API isn't complete yet and returns 400 INVALID_REQUEST; support is pending a future Lucidity release. " +
 			"AZURE and GCP tenants can still be managed here via terraform import (they already exist on Lucidity some other way): List, Update, and Deboard all accept every provider. " +
 			"Deboarding is IRREVERSIBLE via API: see lucidity_dashboard_account_delete_protection and lucidity_account_destroy_behavior below before running terraform destroy.",
 		Blocks: map[string]schema.Block{
@@ -96,7 +97,7 @@ func (r *tenantResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Attributes: map[string]schema.Attribute{
 					"cloud_provider": schema.StringAttribute{
 						Required:    true,
-						Description: "AWS, AZURE, or GCP. Onboarding a brand-new resource is AWS-only (Azure/GCP return 400 INVALID_REQUEST) — an AZURE/GCP resource can only enter Terraform via `terraform import` of a tenant that already exists on Lucidity.",
+						Description: "AWS, AZURE, or GCP. Onboarding a brand-new resource is AWS-only for now (Azure/GCP onboarding isn't complete on Lucidity's side yet and returns 400 INVALID_REQUEST — pending a future Lucidity release) — an AZURE/GCP resource can only enter Terraform via `terraform import` of a tenant that already exists on Lucidity.",
 						Validators: []validator.String{
 							stringvalidator.OneOf("AWS", "AZURE", "GCP"),
 						},
@@ -267,6 +268,38 @@ func isMissingRequiredString(v types.String) bool {
 	return v.IsNull() || v.ValueString() == ""
 }
 
+// ModifyPlan catches an aws_org_root_id change at `terraform plan` time
+// rather than waiting for `apply` to reach Update() — RequiresReplace would
+// be the normal way to block an unsupported change, but that would force a
+// full deboard/re-onboard cycle just to change a local metadata note, which
+// is disproportionate given deboarding is irreversible. Rejecting the plan
+// outright is safer than only failing once Update() actually runs.
+func (r *tenantResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+		return // create (no prior state) or destroy (no plan) — nothing to compare
+	}
+
+	var state, plan tenantResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if plan.AWSRootID.IsUnknown() || plan.AWSRootID.Equal(state.AWSRootID) {
+		return
+	}
+
+	resp.Diagnostics.AddAttributeError(
+		path.Root("aws_org_root_id"),
+		"aws_org_root_id cannot be modified",
+		"Changing aws_org_root_id after onboarding is not supported in this release — Lucidity has no update mechanism for it. "+
+			"Revert it to its current value. If it truly must change, that requires destroying and re-creating this resource "+
+			"(mind lucidity_dashboard_account_delete_protection and lucidity_account_destroy_behavior — deboarding is irreversible). "+
+			"A future release of this provider may add support for modifying it in place, if and when Lucidity exposes an update mechanism for it.",
+	)
+}
+
 func (r *tenantResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	// Expected form: "<cloud_provider>/<cloud_provider_account_id>", e.g.
 	// "AWS/123456789012" or "AZURE/<subscription-id>" or "GCP/<project-id>" —
@@ -312,9 +345,9 @@ func (r *tenantResource) Create(ctx context.Context, req resource.CreateRequest,
 
 	if cloudProvider != "AWS" {
 		resp.Diagnostics.AddError(
-			"Onboarding is AWS-only",
+			"Onboarding is AWS-only for now",
 			fmt.Sprintf(
-				"Cannot create a new lucidity_tenant for cloud_provider %q: Lucidity's onboarding API only accepts AWS today (Azure/GCP return 400 INVALID_REQUEST). "+
+				"Cannot create a new lucidity_tenant for cloud_provider %q: Lucidity's Azure/GCP onboarding API isn't complete yet and returns 400 INVALID_REQUEST — support is pending a future Lucidity release. "+
 					"If cloud account %s already exists as a tenant on Lucidity some other way, use `terraform import lucidity_tenant.<name> %s/%s` instead of creating it fresh.",
 				cloudProvider, accountID, cloudProvider, accountID,
 			),
@@ -422,22 +455,9 @@ func (r *tenantResource) Update(ctx context.Context, req resource.UpdateRequest,
 	cloudProvider := plan.CloudEntityInformation.CloudProvider.ValueString()
 	accountID := plan.CloudEntityInformation.CloudProviderAccountID.ValueString()
 
-	// aws_org_root_id has no update path — documented or otherwise — and no
-	// server-side value to reconcile against (it's not part of the real API
-	// payload's response either). RequiresReplace would force a full
-	// deboard/re-onboard cycle just to change a local metadata note, which
-	// is disproportionate given deboarding is irreversible — reject
-	// explicitly instead of silently dropping the change or forcing replace.
-	if !plan.AWSRootID.Equal(state.AWSRootID) {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("aws_org_root_id"),
-			"aws_org_root_id cannot be modified",
-			"Changing aws_org_root_id after onboarding is not supported in this release — Lucidity has no update mechanism for it. "+
-				"Revert it to its current value. If it truly must change, that requires destroying and re-creating this resource "+
-				"(mind lucidity_dashboard_account_delete_protection and lucidity_account_destroy_behavior — deboarding is irreversible). A future release may add real update support.",
-		)
-		return
-	}
+	// aws_org_root_id immutability is enforced in ModifyPlan (plan-time),
+	// not here — by the time Update() runs, a changed value has already
+	// blocked the apply. See ModifyPlan for why.
 
 	updateReq := client.UpdateTenantRequest{
 		CloudEntityInformation: client.CloudEntityInformation{

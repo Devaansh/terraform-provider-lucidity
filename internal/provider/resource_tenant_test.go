@@ -241,3 +241,105 @@ func TestTenantResourceRPC_ValidateConfig_RejectsInvalidDestroyBehavior(t *testi
 		t.Fatalf("expected an error diagnostic for lucidity_account_destroy_behavior=delete (must be forget|deboard), got: %+v", resp.Diagnostics)
 	}
 }
+
+func boolVal(b bool) tftypes.Value { return tftypes.NewValue(tftypes.Bool, b) }
+
+// tenantFullValue builds a complete, schema-shaped object value (every
+// attribute concretely set, standing in for an existing resource's prior
+// state or a fully-known plan) for driving PlanResourceChange directly.
+func tenantFullValue(overrides map[string]tftypes.Value, ceiOverrides map[string]tftypes.Value) tftypes.Value {
+	validCEI := map[string]tftypes.Value{
+		"cloud_provider":             strVal("AWS"),
+		"cloud_provider_account_id":  strVal("123456789012"),
+		"aws_iam_external_id":        strVal("8f14e45f-ceea-4331-9f5e-111111111111"),
+		"aws_iam_role_name":          strVal("LucidityRole"),
+		"aws_iam_policy_name":        strVal("LucidityPolicy"),
+		"azure_service_principal_id": tftypes.NewValue(tftypes.String, nil),
+		"azure_directory_id":         tftypes.NewValue(tftypes.String, nil),
+	}
+	for k, v := range ceiOverrides {
+		validCEI[k] = v
+	}
+	cei := tftypes.NewValue(cloudEntityInformationType(), validCEI)
+
+	full := map[string]tftypes.Value{
+		"cloud_entity_information":                     cei,
+		"lucidity_dashboard_display_name":              strVal("non-prod"),
+		"lucidity_product_list":                        tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, []tftypes.Value{strVal("AUTOSCALER")}),
+		"aws_org_root_id":                              strVal("111111111111"),
+		"skip_cloud_permission_check":                  boolVal(false),
+		"lucidity_dashboard_account_delete_protection": boolVal(true),
+		"lucidity_account_destroy_behavior":            strVal("forget"),
+		"tenant_id":                                    strVal("acme_123456789012"),
+		"status":                                       strVal("ACTIVE"),
+		"cloud_entity_name":                            strVal("acme-123456789012"),
+	}
+	for k, v := range overrides {
+		full[k] = v
+	}
+	return tftypes.NewValue(tenantConfigType(), full)
+}
+
+func TestTenantResourceRPC_PlanResourceChange_RejectsAWSOrgRootIDChange(t *testing.T) {
+	srv := newTestProviderServer(t)
+	objType := tenantConfigType()
+
+	priorDV, err := tfprotov6.NewDynamicValue(objType, tenantFullValue(nil, nil))
+	if err != nil {
+		t.Fatalf("NewDynamicValue(prior): %v", err)
+	}
+	changed := tenantFullValue(map[string]tftypes.Value{"aws_org_root_id": strVal("222222222222")}, nil)
+	configDV, err := tfprotov6.NewDynamicValue(objType, changed)
+	if err != nil {
+		t.Fatalf("NewDynamicValue(config): %v", err)
+	}
+	proposedDV, err := tfprotov6.NewDynamicValue(objType, changed)
+	if err != nil {
+		t.Fatalf("NewDynamicValue(proposed): %v", err)
+	}
+
+	resp, err := srv.PlanResourceChange(context.Background(), &tfprotov6.PlanResourceChangeRequest{
+		TypeName:         tenantResourceTypeName,
+		PriorState:       &priorDV,
+		ProposedNewState: &proposedDV,
+		Config:           &configDV,
+	})
+	if err != nil {
+		t.Fatalf("PlanResourceChange: %v", err)
+	}
+	if !hasErrorDiagnostic(resp.Diagnostics) {
+		t.Fatalf("expected a plan-time error diagnostic for a changed aws_org_root_id, got: %+v", resp.Diagnostics)
+	}
+}
+
+func TestTenantResourceRPC_PlanResourceChange_AllowsUnchangedAWSOrgRootID(t *testing.T) {
+	srv := newTestProviderServer(t)
+	objType := tenantConfigType()
+
+	same := tenantFullValue(nil, nil)
+	priorDV, err := tfprotov6.NewDynamicValue(objType, same)
+	if err != nil {
+		t.Fatalf("NewDynamicValue(prior): %v", err)
+	}
+	configDV, err := tfprotov6.NewDynamicValue(objType, same)
+	if err != nil {
+		t.Fatalf("NewDynamicValue(config): %v", err)
+	}
+	proposedDV, err := tfprotov6.NewDynamicValue(objType, same)
+	if err != nil {
+		t.Fatalf("NewDynamicValue(proposed): %v", err)
+	}
+
+	resp, err := srv.PlanResourceChange(context.Background(), &tfprotov6.PlanResourceChangeRequest{
+		TypeName:         tenantResourceTypeName,
+		PriorState:       &priorDV,
+		ProposedNewState: &proposedDV,
+		Config:           &configDV,
+	})
+	if err != nil {
+		t.Fatalf("PlanResourceChange: %v", err)
+	}
+	if hasErrorDiagnostic(resp.Diagnostics) {
+		t.Fatalf("expected no error diagnostic when aws_org_root_id is unchanged, got: %+v", resp.Diagnostics)
+	}
+}

@@ -37,3 +37,27 @@ jobs:
 
       - name: go test
         run: go test ./... -race -v
+
+  docs:
+    name: Check generated docs are current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install tfplugindocs
+        run: go install github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs@latest
+
+      - name: Regenerate docs
+        run: tfplugindocs generate --provider-name lucidity
+
+      - name: Fail if docs/ is out of date
+        run: |
+          if ! git diff --exit-code -- docs/; then
+            echo "::error::docs/ is out of date with the provider schema and/or examples/. Run 'tfplugindocs generate --provider-name lucidity' locally and commit the result."
+            exit 1
+          fi
