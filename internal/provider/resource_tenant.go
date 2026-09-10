@@ -395,7 +395,9 @@ func (r *tenantResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
-	if diags := r.refreshFromList(ctx, cloudProvider, accountID, &plan); diags.HasError() {
+	// A freshly-onboarded tenant has no prior List entry to compare against,
+	// so any match at all is fresh enough — nothing to verify here.
+	if diags := r.refreshFromList(ctx, cloudProvider, accountID, &plan, nil); diags.HasError() {
 		resp.Diagnostics.Append(diags...)
 		return
 	}
@@ -498,7 +500,14 @@ func (r *tenantResource) Update(ctx context.Context, req resource.UpdateRequest,
 	// lucidity_account_destroy_behavior are local-only / onboard-only — no API call needed;
 	// the planned value is simply carried into state below.
 
-	if diags := r.refreshFromList(ctx, cloudProvider, accountID, &plan); diags.HasError() {
+	// display_name is the only field List actually returns that Update() can
+	// also change, so it's the only one worth checking for staleness here —
+	// role/policy name changes aren't visible via List at all (applyListItem
+	// never touches them), so they can't come back stale this way.
+	wantDisplayName := plan.DisplayName.ValueString()
+	if diags := r.refreshFromList(ctx, cloudProvider, accountID, &plan, func(item client.TenantListItem) bool {
+		return item.DisplayName == wantDisplayName
+	}); diags.HasError() {
 		resp.Diagnostics.Append(diags...)
 		return
 	}
@@ -572,14 +581,26 @@ func (r *tenantResource) Delete(ctx context.Context, req resource.DeleteRequest,
 // list-and-match previously turned a genuinely successful onboard into a
 // hard Terraform error, with the newly-onboarded tenant left real but
 // completely untracked in state (discovered the hard way; had to
-// `terraform import` it back). A few short retries costs at most a couple
-// of seconds in the overwhelmingly common case where it's already visible.
+// `terraform import` it back). The first fix (4 attempts, 2s apart, 8s
+// total) still wasn't always enough — observed the same account visible
+// after ~10s more in one case — so this budget is deliberately generous;
+// it only ever costs real wall-clock time in the rare case where a retry
+// is actually needed, not the common case where the first list already
+// finds it.
 const (
-	refreshFromListRetries = 4
-	refreshFromListDelay   = 2 * time.Second
+	refreshFromListRetries = 8
+	refreshFromListDelay   = 3 * time.Second
 )
 
-func (r *tenantResource) refreshFromList(ctx context.Context, cloudProvider, accountID string, model *tenantResourceModel) diag.Diagnostics {
+// fresh, if non-nil, is checked against a found list entry before accepting
+// it — live-tested 2026-09-10: List can return a match for the right
+// account that's itself stale (a cached snapshot from before a just-applied
+// PATCH), which previously caused Update() to write pre-update field values
+// back into the final state despite the plan promising the new ones,
+// surfacing as a hard "Provider produced inconsistent result after apply"
+// framework error. A found-but-stale entry is treated the same as
+// not-found: retried up to the same budget.
+func (r *tenantResource) refreshFromList(ctx context.Context, cloudProvider, accountID string, model *tenantResourceModel, fresh func(client.TenantListItem) bool) diag.Diagnostics {
 	var diags diag.Diagnostics
 	for attempt := 0; ; attempt++ {
 		tenants, err := r.client.ListTenants(ctx)
@@ -587,15 +608,15 @@ func (r *tenantResource) refreshFromList(ctx context.Context, cloudProvider, acc
 			diags.AddError("Unable to list Lucidity tenants", err.Error())
 			return diags
 		}
-		if found, ok := client.FindTenant(tenants, cloudProvider, accountID); ok {
+		if found, ok := client.FindTenant(tenants, cloudProvider, accountID); ok && (fresh == nil || fresh(found)) {
 			applyListItem(model, found)
 			return diags
 		}
 		if attempt >= refreshFromListRetries-1 {
 			diags.AddError(
-				"Lucidity tenant not found immediately after apply",
+				"Lucidity tenant not found (or not yet up to date) after apply",
 				fmt.Sprintf(
-					"Cloud account %s was not found in a follow-up list call after %d attempts over %s, despite the API reporting success. This may be an unusually long propagation delay — retry the apply (it will hit the ACTIVE-duplicate pre-check if the onboard truly went through, which confirms that), or check the Lucidity dashboard directly and `terraform import` it if it's there.",
+					"Cloud account %s was not found — or was found but didn't yet reflect the change just made — in a follow-up list call after %d attempts over %s, despite the API reporting success. This may be an unusually long propagation delay — retry the apply (for a fresh onboard, a retry will hit the ACTIVE-duplicate pre-check if it truly went through, which confirms that), or check the Lucidity dashboard directly and `terraform import`/re-apply once it's caught up.",
 					accountID, refreshFromListRetries, time.Duration(refreshFromListRetries)*refreshFromListDelay,
 				),
 			)
