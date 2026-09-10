@@ -152,7 +152,7 @@ import, before using it for any modify testing.
 
 | ID | Test case | Status | Date | Notes / evidence |
 |---|---|---|---|---|
-| 4.1 | Onboard multiple accounts in a single `apply` | Not run | | |
+| 4.1 | Onboard multiple accounts in a single `apply` | Pass | 2026-09-11 | Onboarded pool4 (348258986987) and pool5 (446476244328) concurrently via `concurrency/main.tf`'s `for_each`. Both onboard calls succeeded with no cross-account interference; the only friction was the same List-propagation delay already characterized elsewhere (this time noticeably longer — a couple of minutes rather than tens of seconds), not anything concurrency-specific. On retry, both correctly hit the ACTIVE-duplicate conflict (confirming the first attempt's onboards had genuinely gone through even though List didn't show them yet), then both `terraform import`ed cleanly once List caught up. |
 | 4.2 | (Stretch) Race two concurrent applies against the same new account | Not run | | Optional |
 
 ## 5. Provider / auth sanity tests
@@ -160,5 +160,5 @@ import, before using it for any modify testing.
 | ID | Test case | Status | Date | Notes / evidence |
 |---|---|---|---|---|
 | 5.1 | Full apply cycle — end-to-end auth sanity check | Pass | 2026-09-10 | Real refresh token against `dash-back.lucidity.dev` (`Lucidity_Business` account) — token exchange, access token use, and retries all worked correctly through a full session of applies/imports. |
-| 5.2 | Deliberately invalid/expired refresh token | Not run | | |
+| 5.2 | Deliberately invalid/expired refresh token | Pass (nuance found) | 2026-09-11 | A garbage refresh token surfaces clearly at first API use: `"Invalid refresh token"`. **Nuance:** this specific failure mode returns `{message,status,data,trackingCode}` — a different envelope shape than the standard `{success,data,error,requestId}` — so it doesn't parse as `client.APIError` and falls through to a generic "unexpected response body" message rather than CLAUDE.md's polished "Required error message (401 / expired refresh token)" text. That polished message is designed around a real, *expired* token's 401 response (standard envelope); a malformed/garbage token gets a 400 with a different shape instead. Not fixed — low priority, the underlying failure is still surfaced clearly, just less politely worded. |
 | 5.3 | Long-running apply spanning the proactive refresh buffer | Not run | | Schedule deliberately — needs 15+ min wall clock |
