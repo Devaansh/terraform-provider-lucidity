@@ -27,7 +27,7 @@ About Lucidity - https://www.lucidity.cloud/
 Lucidity's own product is organized into functional sections; this
 provider's phases map onto them, and future phases will keep following this
 list rather than being organized purely around Terraform resource
-boundaries. QA test logs are organized the same way — see
+boundaries. QA test and logs are organized the same way — see
 [docs/qa/README.md](docs/qa/README.md).
 
 | Section | Provider phase | Status (AWS) | Status (Azure) | Status (GCP) |
@@ -39,7 +39,7 @@ boundaries. QA test logs are organized the same way — see
 | Lucidity agent installation and status validation | Phase 4 | Not yet implemented | Not yet implemented | Not yet implemented |
 | Onboarding and Disk management | Phase 4 | Not yet implemented | Not yet implemented | Not yet implemented |
 | Lucidity Buffer policy management | Phase 3 | Not yet implemented | Not yet implemented | Not yet implemented |
-| Lucidity Temporary buffer management | 3 | Not yet implemented | Not yet implemented | Not yet implemented |
+| Lucidity Temporary buffer management | Phase 3 | Not yet implemented | Not yet implemented | Not yet implemented |
 
 
 ## Documents
@@ -67,7 +67,7 @@ tfplugindocs generate --provider-name lucidity
 
 
 
-## Authentication Management
+## Provider Authentication Management
 
 
 1. Log into the Lucidity Dashbaord
@@ -77,10 +77,10 @@ tfplugindocs generate --provider-name lucidity
 5. Supply the refresh token to this provider
 
 The provider takes the refresh token via (exactly one) of the following:
-`refresh_token` (to pull from a data source)
-`refresh_token_file` (to pull from a safely maintained file)
-`refresh_token_command` (generic hook that covers every backend)
-`LUCIDITY_REFRESH_TOKEN` env var 
+1. `refresh_token` (to pull from a data source)
+2. `refresh_token_file` (to pull from a safely maintained file)
+3. `refresh_token_command` (generic hook that covers every backend)
+4. `LUCIDITY_REFRESH_TOKEN` env var 
 
 — see `internal/provider/provider.go` for the full schema.
 
@@ -232,19 +232,18 @@ Vault policy granting `read` on that KV path.
 
 **Option 4 (AVOID)  -  Hardcode token**
 
-
-- **Never hardcode the refresh token directly in a `.tf` file.** Even if you
+- **Avoid hardcoding the refresh token directly in a `.tf` file.** Even if you
   remove it later, it stays in your git history in plaintext forever.
-- **Avoid `.tfvars` files for it.** If you must (e.g. no secret manager
-  available), treat the `.tfvars` file exactly like the direct `refresh_token`
+- **Avoid `.tfvars` files for it.** Treat the `.tfvars` file exactly like the direct `refresh_token`
   attribute — same plaintext-on-disk risk — keep it out of version control
   (`.gitignore`), and prefer the `LUCIDITY_REFRESH_TOKEN` env var or one of
   the `refresh_token_command` recipes above instead.
+- Token can be hardcoded in during testing. Remember to expire the token via the Lucidity Dashbaord once testing is completed
 
 
-## Local development setup
+## Recommended local development setup
 
-Tested on a Mac laptop.
+**For a Mac laptop**
 
 ```
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -271,8 +270,7 @@ brew install node
 npm install -g @anthropic-ai/claude-code
 ```
 
-
-### VS Code extensions
+**VS Code extensions**
 
 - Go — ID: `golang.go` (publisher: Go Team at Google)
 - HashiCorp Terraform — ID: `hashicorp.terraform` (publisher: HashiCorp)
@@ -281,3 +279,5 @@ npm install -g @anthropic-ai/claude-code
 - GitDoc — ID: `vsls-contrib.gitdoc` (publisher: Jonathan Carter / vsls-contrib)
 
 GitDoc auto-commit settings for this repo live in [.vscode/settings.json](.vscode/settings.json).
+
+
