@@ -469,6 +469,19 @@ identity mechanism).
 
 - Unit tests: mock server, recorded envelopes, cover INACTIVE / NOT_FOUND /
   permission-failure / expired-token cases. Run on every PR.
+- **Lifecycle tests (added 2026-09-10):**
+  `internal/provider/resource_tenant_lifecycle_test.go` drives
+  `tenantResource`'s actual `Create`/`Read`/`Update`/`Delete`/`ImportState`
+  Go methods directly against a stateful local mock server — bypassing
+  `Configure()` entirely, since `lucidity_dashboard_url`'s closed URL set
+  has no override to redirect at a mock. No live credentials needed; runs
+  in CI. This is what actually closes the "CRUD business logic has zero
+  test coverage" gap that the schema/validator RPC tests never covered:
+  the full onboard→update→destroy-safety→re-onboard-conflict→deboard→
+  re-onboard-conflict sequence, out-of-band drift detection (`Read()`
+  finding a tenant gone INACTIVE without `Delete()` having run), a vanished
+  tenant being removed from state, the cloud-account-validation-401
+  distinguishing logic, and `ImportState` parsing (well-formed + malformed).
 - Acceptance tests (TF_ACC=1): maintainer's sandbox accounts, treated as live.
   AWS first (onboarding is AWS-only per the current API); Azure/GCP schema
   support (List/Deboard/Update already accept all three providers) ships in
@@ -476,6 +489,19 @@ identity mechanism).
 - Destroy-path tests: protection-error and forget paths run freely; the
   actual-deboard test is separately tagged and run deliberately (sandbox
   tenants burn permanently on each deboard).
+- **Live QA campaign (started 2026-09-10):** a ~60-case manual test matrix
+  against 4 real AWS accounts (3 disposable pool accounts plus
+  `testaccount1`, provisioned by `aws-terraform-account-creation`) and a
+  real Lucidity account, tracked in `QA_TEST_LOG.md` (status per case, not
+  duplicated here) with a `~/Desktop/terraform testing/` config refreshed
+  for Phase 2 (`provider.tf`/`variables.tf`/`lucidity_tenant.tf`/
+  `datasource.tf` plus `testvars/`, `concurrency/`, `import/` — see that
+  directory's README). Blocked on: a live `LUCIDITY_REFRESH_TOKEN`, and
+  adding `LucidityRole`/`LucidityPolicy` to `testaccount1` (it currently has
+  neither — see `aws-terraform-account-creation`'s `lucidity_test_accounts.tf`
+  for the pattern already used for the 3 pool accounts). Findings that
+  resolve an open question or reveal new behavior get folded back into this
+  file's Live API testing notes, same as the 2026-09-06 round.
 
 ## Open questions (do not block Phase 1)
 
