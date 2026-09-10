@@ -480,6 +480,50 @@ real `LucidityRole`/`LucidityPolicy` from the maintainer's own IAM sample).
   debugging the permission-check failure above) — Open Question #7 remains
   open.
 
+### Live API testing notes (2026-09-11)
+
+Continued the Phase 12 QA campaign through the remaining test matrix —
+modify, deboard, import-edge-case, and data-source cross-reference cases —
+against pool1/pool2/pool3. Full per-case results in `QA_TEST_LOG.md`;
+notable findings not obvious from the doc:
+
+- **Open Question #7 resolved:** `aws_org_root_id` is accepted on a real
+  onboard call (1.1.1) — Lucidity doesn't reject the undocumented field.
+- **Open Question #6 resolved:** re-onboarding an INACTIVE tenant is
+  blocked, both by this provider's own pre-check and by Lucidity's native
+  `409 CONFLICT` (1.3.5) — matches the design in "INACTIVE handling" above.
+- **New finding — Update() doesn't validate role/policy existence or
+  reachability at all** (1.2.1/1.2.4/1.2.10): a completely dummy/nonexistent
+  `aws_iam_role_name`/`aws_iam_policy_name` is accepted silently by the real
+  `PATCH` endpoint — asymmetric with onboard's strict reachability check.
+  Not a bug in this provider (nothing to validate client-side without
+  duplicating Lucidity's own AssumeRole check), but worth knowing: a typo'd
+  role/policy name on modify won't surface until something actually needs
+  that role, not at apply time.
+- **List-endpoint propagation delay is common, not rare, and applies to
+  deboard too, not just onboard/update.** Confirmed via direct repeated API
+  calls (bypassing this provider entirely) that a deboard's underlying
+  state change is immediate and real — a second deboard call on an
+  already-deboarded account correctly returns `ALREADY_DE_BOARDED`
+  instantly — but the List endpoint itself lagged 45s-120+ seconds behind
+  in multiple observed cases this session (both on deboard and on Update
+  PATCH), regularly exceeding `refreshFromList`'s current 24s (8×3s) retry
+  budget. The documented recovery (retry the apply once the propagation
+  catches up) worked every time it was needed. Not widening the retry
+  budget further — a bounded, occasionally-retried window is the right
+  trade-off over either a much longer default cost on every apply or an
+  unbounded wait.
+- **Testing-methodology lesson, not a provider bug:** an imported
+  resource's write-only fields (`aws_iam_external_id`, `lucidity_product_list`)
+  must be patched into state (via `terraform state pull` → edit → `state
+  push`) immediately after import, before using it for further modify
+  testing — otherwise every subsequent apply plans a full destroy+recreate
+  instead of an in-place update (exactly per the documented "Known import
+  gap" behavior). `account_delete_protection`'s default-true blocked the
+  destroy phase every time this was missed, so nothing was ever actually
+  lost, but see `QA_TEST_LOG.md`'s methodology note under section 1.2 for
+  the full account.
+
 ### Live API testing notes (2026-09-06)
 
 Tested against `LucidityPLS` (`dashboard-azurepls.lucidity.cloud`) using two
@@ -564,22 +608,15 @@ identity mechanism).
    bodies across refresh/list/onboard calls. Blocks implementing the
    cross-validation Configure() is supposed to do. Needs either a
    Lucidity-provided endpoint or an alternative signal.
-6. **Full destructive-cycle confirmation** (new 2026-09-06): a real
-   onboard→update→deboard→re-onboard-conflict cycle hasn't been exercised —
-   dummy AWS account numbers fail cloud-account validation regardless of
-   `skipCloudPermissionCheck`. Deferred until a real, disposable AWS account
-   with an actually-assumable IAM role is available. **Note (2026-09-07):**
-   the resource implementation itself is done and verified at the
-   schema/plan level (`terraform validate`/`plan` against the compiled
-   provider with the reference example, plus mock-server unit tests) — this
-   item is specifically about confirming real API behavior end-to-end, not
-   about whether the Go code exists.
-7. **`aws_org_root_id` on the real onboard payload** (new 2026-09-07): sent
-   best-effort per the maintainer's explicit instruction, but the current
-   Public Tenant API doc has no such field in its onboard request table —
-   unverified whether Lucidity silently ignores it, silently drops it, or
-   rejects the whole call. Needs a live onboard test — not yet done; the
-   2026-09-10 live session got sidetracked debugging #8 below instead.
+6. ~~Full destructive-cycle confirmation~~ **Resolved 2026-09-11:** the full
+   real onboard (1.1.2) → update (1.2.x) → deboard (1.3.3) →
+   re-onboard-conflict (1.3.5) cycle has now been exercised end-to-end
+   against pool1/pool3, including the idempotent re-deboard case (1.3.4)
+   and out-of-band-deboard drift detection (1.3.6/1.3.7). See
+   `QA_TEST_LOG.md` section 1.3 and the 2026-09-11 live testing notes above.
+7. ~~`aws_org_root_id` on the real onboard payload~~ **Resolved 2026-09-10:**
+   accepted — a real onboard call with `aws_org_root_id` set succeeded
+   (1.1.1). Lucidity does not reject the undocumented field.
 8. **`500 INTERNAL_ERROR` / "Tenant PermissionCheck Failed"** (new
    2026-09-10): onboarding a real AWS account with the maintainer's own
    real `LucidityPolicy` correctly attached, `skipCloudPermissionCheck`
