@@ -581,15 +581,19 @@ func (r *tenantResource) Delete(ctx context.Context, req resource.DeleteRequest,
 // list-and-match previously turned a genuinely successful onboard into a
 // hard Terraform error, with the newly-onboarded tenant left real but
 // completely untracked in state (discovered the hard way; had to
-// `terraform import` it back). The first fix (4 attempts, 2s apart, 8s
-// total) still wasn't always enough — observed the same account visible
-// after ~10s more in one case — so this budget is deliberately generous;
-// it only ever costs real wall-clock time in the rare case where a retry
-// is actually needed, not the common case where the first list already
-// finds it.
+// `terraform import` it back). Widened twice since: 4x2s (8s) wasn't
+// always enough, then 8x3s (24s) wasn't either — live QA testing on
+// 2026-09-11 saw this delay regularly land in the 45s-120s range (not a
+// rare tail case in this environment), on Update and deboard too, not
+// just onboard. Bumped to 10x15s (150s total) to comfortably cover that
+// observed range. Deliberately not pushed further (e.g. to 200s+): this
+// constant is a blocking wait on every apply that hits the not-found
+// branch, including genuine failures, and no finite bound fully
+// eliminates the tail — the documented manual-retry-the-apply fallback
+// stays the answer for delays beyond this window.
 const (
-	refreshFromListRetries = 8
-	refreshFromListDelay   = 3 * time.Second
+	refreshFromListRetries = 10
+	refreshFromListDelay   = 15 * time.Second
 )
 
 // fresh, if non-nil, is checked against a found list entry before accepting
