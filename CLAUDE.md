@@ -32,7 +32,7 @@ boundaries. QA test logs are organized the same way — see
 | Agent install and status validation | — | Not yet implemented |
 | Buffer policy management | — | Not yet implemented |
 | Temporary buffer management | — | Not yet implemented |
-| Mount-point onboarding | — | Not yet implemented |
+| Onboarding and Disk management | — | Not yet implemented |
 
 ## Current scope — PHASE 1 (auth) + PHASE 2 (tenant resource), both shipped
 

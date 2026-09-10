@@ -24,7 +24,7 @@ notes"; the log here just tracks whether/when/how each case was run.
 | Agent install and status validation | Not yet implemented | — |
 | Buffer policy management | Not yet implemented | — |
 | Temporary buffer management | Not yet implemented | — |
-| Mount-point onboarding | Not yet implemented | — |
+| Onboarding and Disk management | Not yet implemented | — |
 
 When a new section ships, add its log here as `docs/qa/<section-slug>.md`
 following the same conventions as the two existing logs (status legend,
