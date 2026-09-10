@@ -1,6 +1,44 @@
 # terraform-provider-lucidity
 
-Terraform provider for Lucidity: authentication (Phase 1) and the
+Terraform provider for Lucidity (cloud storage optimization platform). 
+
+About Lucidity: https://www.lucidity.cloud/
+Goal: published to the public Terraform Registry as a community provider, built to Partner-tier quality.
+
+
+## Project facts
+
+- **Language/stack:** Go + Terraform Plugin Framework (NOT legacy SDKv2).
+- **License:** MPL-2.0.
+- **Publishing:** community provider from the maintainer's personal GitHub repo.
+  Releases signed with a dedicated GPG key held by the maintainer.
+- **API docs:** `docs/api/` contains the three Lucidity API reference PDFs
+  (auth refresh, getting started, Public Tenant API). Treat these as the source
+  of truth for endpoints, fields, and error tables.
+
+
+## Product sections
+
+Lucidity's own product is organized into functional sections; this
+provider's phases map onto them, and future phases will keep following this
+list rather than being organized purely around Terraform resource
+boundaries. QA test logs are organized the same way — see
+[docs/qa/README.md](docs/qa/README.md).
+
+| Section | Provider phase | Status (AWS) | Status (Azure) | Status (GCP) |
+|---|---|---|---|---|
+| Authentication management | Phase 1 | Shipped |  Shipped |  Shipped |
+| Account management | Phase 2 | Shipped | WIP | WIP |
+| User management | — | Not yet implemented | Not yet implemented | Not yet implemented |
+| Permission validation (cloud IAM vs. Lucidity requirements) | — | Not yet implemented | Not yet implemented | Not yet implemented |
+| Agent install and status validation | — | Not yet implemented | Not yet implemented | Not yet implemented |
+| Buffer policy management | — | Not yet implemented | Not yet implemented | Not yet implemented |
+| Temporary buffer management | — | Not yet implemented | Not yet implemented | Not yet implemented |
+| Disk management | — | Not yet implemented | Not yet implemented | Not yet implemented |
+
+
+
+and the
 `lucidity_tenant` resource / `lucidity_tenants` data source (Phase 2).
 See [CLAUDE.md](CLAUDE.md) for the full design record and phase plan.
 
@@ -16,15 +54,33 @@ This repo holds provider source only — no sample/testing Terraform configs.
 Published at `registry.terraform.io/Devaansh/lucidity`; pull it from there to
 try it out.
 
-## Supplying the refresh token
 
-The provider takes the refresh token via `refresh_token` / `refresh_token_file`
-/ `refresh_token_command` (exactly one) or the `LUCIDITY_REFRESH_TOKEN` env
-var — see `internal/provider/provider.go` for the full schema. `refresh_token_command`
-is the one generic hook that covers every secret backend below without the
+## Authentication Management
+
+
+1. Log into your Lucidity Dashbaord
+2. Click on settings (Bottom left)
+3. Click on "API Key"
+4. Click on "Create Key" to generate a refresh token
+5. Supply the refresh token to this provider
+
+The provider takes the refresh token via (exactly one) of the following:
+`refresh_token` 
+`refresh_token_file`
+`refresh_token_command`
+`LUCIDITY_REFRESH_TOKEN` env var 
+
+— see `internal/provider/provider.go` for the full schema.
+
+
+`refresh_token_command` is the one generic hook that covers every secret backend below without the
 provider needing bespoke client code for each — prefer it over feeding
 `refresh_token` from a data source (see the state-encryption caveat repeated
 under each backend).
+
+
+** AWS - Supplying the refresh token Option 1 (recommended): `refresh_token_command`, via the AWS CLI**
+
 
 ### AWS Secrets Manager
 
