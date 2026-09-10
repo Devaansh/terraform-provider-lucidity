@@ -15,6 +15,25 @@ revisit them without asking the maintainer.
   (auth refresh, getting started, Public Tenant API). Treat these as the source
   of truth for endpoints, fields, and error tables.
 
+## Product sections
+
+Lucidity's own product is organized into functional sections; this
+provider's phases map onto them, and future phases will keep following this
+list rather than being organized purely around Terraform resource
+boundaries. QA test logs are organized the same way — see
+[docs/qa/README.md](docs/qa/README.md).
+
+| Section | Provider phase | Status |
+|---|---|---|
+| Authentication management | Phase 1 | Shipped |
+| Account management | Phase 2 | Shipped |
+| User management | — | Not yet implemented |
+| Permission validation (cloud IAM vs. Lucidity requirements) | — | Not yet implemented |
+| Agent install and status validation | — | Not yet implemented |
+| Buffer policy management | — | Not yet implemented |
+| Temporary buffer management | — | Not yet implemented |
+| Mount-point onboarding | — | Not yet implemented |
+
 ## Current scope — PHASE 1 (auth) + PHASE 2 (tenant resource), both shipped
 
 **Update (2026-09-07):** Phase 2 is now implemented — see the "PHASE 2"
@@ -484,8 +503,9 @@ real `LucidityRole`/`LucidityPolicy` from the maintainer's own IAM sample).
 
 Continued the Phase 12 QA campaign through the remaining test matrix —
 modify, deboard, import-edge-case, and data-source cross-reference cases —
-against pool1/pool2/pool3. Full per-case results in `QA_TEST_LOG.md`;
-notable findings not obvious from the doc:
+against pool1/pool2/pool3. Full per-case results in
+`docs/qa/account-management.md` (and `docs/qa/authentication-management.md`
+for the auth-sanity cases); notable findings not obvious from the doc:
 
 - **Open Question #7 resolved:** `aws_org_root_id` is accepted on a real
   onboard call (1.1.1) — Lucidity doesn't reject the undocumented field.
@@ -521,8 +541,8 @@ notable findings not obvious from the doc:
   instead of an in-place update (exactly per the documented "Known import
   gap" behavior). `account_delete_protection`'s default-true blocked the
   destroy phase every time this was missed, so nothing was ever actually
-  lost, but see `QA_TEST_LOG.md`'s methodology note under section 1.2 for
-  the full account.
+  lost, but see `docs/qa/account-management.md`'s methodology note under
+  section 1.2 for the full account.
 
 ### Live API testing notes (2026-09-06)
 
@@ -575,8 +595,9 @@ identity mechanism).
 - **Live QA campaign (started 2026-09-10):** a ~60-case manual test matrix
   against 4 real AWS accounts (3 disposable pool accounts plus
   `testaccount1`, provisioned by `aws-terraform-account-creation`) and a
-  real Lucidity account, tracked in `QA_TEST_LOG.md` (status per case, not
-  duplicated here) with a `~/Desktop/terraform testing/` config refreshed
+  real Lucidity account, tracked per-section in `docs/qa/` (status per case,
+  not duplicated here — see `docs/qa/README.md`) with a
+  `~/Desktop/terraform testing/` config refreshed
   for Phase 2 (`provider.tf`/`variables.tf`/`lucidity_tenant.tf`/
   `datasource.tf` plus `testvars/`, `concurrency/`, `import/` — see that
   directory's README). Blocked on: a live `LUCIDITY_REFRESH_TOKEN`, and
@@ -613,7 +634,8 @@ identity mechanism).
    re-onboard-conflict (1.3.5) cycle has now been exercised end-to-end
    against pool1/pool3, including the idempotent re-deboard case (1.3.4)
    and out-of-band-deboard drift detection (1.3.6/1.3.7). See
-   `QA_TEST_LOG.md` section 1.3 and the 2026-09-11 live testing notes above.
+   `docs/qa/account-management.md` section 1.3 and the 2026-09-11 live
+   testing notes above.
 7. ~~`aws_org_root_id` on the real onboard payload~~ **Resolved 2026-09-10:**
    accepted — a real onboard call with `aws_org_root_id` set succeeded
    (1.1.1). Lucidity does not reject the undocumented field.
