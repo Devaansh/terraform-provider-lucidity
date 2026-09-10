@@ -441,6 +441,45 @@ tenant. Enables the "desired vs actual" output pattern (Output 3 in
 planning). Live-confirmed 2026-09-06 against a real account (`LucidityPLS`)
 — response shape matches this exactly.
 
+### Live API testing notes (2026-09-10)
+
+First live test against a real production-shaped account (`Lucidity_Business`,
+`dash-back.lucidity.dev`, 8 pre-existing tenants across AWS/AZURE/GCP — all
+INACTIVE) rather than a small sandbox, using real AWS infrastructure
+(`aws-terraform-account-creation`'s pool1, account 810100779479, with the
+real `LucidityRole`/`LucidityPolicy` from the maintainer's own IAM sample).
+
+- `lucidity_tenants` data source: confirmed working end-to-end against a
+  real, larger account — full listing, all fields accurate.
+- **New, previously undocumented failure mode:** onboarding pool1 with
+  `skip_cloud_permission_check = false` (default) — a real AWS account
+  with the maintainer's own real `LucidityPolicy` correctly attached —
+  failed with `500 INTERNAL_ERROR`: `"Tenant PermissionCheck Failed"`.
+  Reproduced twice, not transient. Not in the doc's error tables at all.
+  **Unresolved:** unclear whether this is a real gap in the sample policy,
+  an IAM propagation-timing issue, or a genuine bug on Lucidity's side —
+  needs following up with Lucidity directly.
+- Confirmed `skip_cloud_permission_check = true` bypasses this specific
+  failure — onboard proceeded past it to a real `201 Created`.
+- **Bug found and fixed the same session:** with the permission check
+  bypassed, the onboard call itself succeeded, but the provider's
+  follow-up list-and-match (`refreshFromList`, shared by `Create`/`Update`)
+  didn't find the new tenant on the very next `List` call — a real
+  server-side propagation delay the provider had zero tolerance for. This
+  turned a genuinely successful onboard into a hard Terraform error, with
+  the real, now-ACTIVE tenant left completely untracked in state (recovered
+  manually via `terraform import`). Fixed by giving `refreshFromList` a
+  bounded retry (4 attempts, 2s apart) before giving up — see
+  `internal/provider/resource_tenant.go`.
+- Confirmed live, exactly as designed: importing a tenant whose
+  `aws_iam_external_id`/`lucidity_product_list` can't be recovered (both
+  write-only/unlisted, per the Import section above), then applying a
+  config with the real original values for them, shows a forced replace —
+  matching the documented import gap, not a bug.
+- `aws_org_root_id` was not exercised in this pass (focus shifted to
+  debugging the permission-check failure above) — Open Question #7 remains
+  open.
+
 ### Live API testing notes (2026-09-06)
 
 Tested against `LucidityPLS` (`dashboard-azurepls.lucidity.cloud`) using two
@@ -539,8 +578,19 @@ identity mechanism).
    best-effort per the maintainer's explicit instruction, but the current
    Public Tenant API doc has no such field in its onboard request table —
    unverified whether Lucidity silently ignores it, silently drops it, or
-   rejects the whole call. Needs a live onboard test (blocked on the same
-   real-AWS-account gap as #6) to know which.
+   rejects the whole call. Needs a live onboard test — not yet done; the
+   2026-09-10 live session got sidetracked debugging #8 below instead.
+8. **`500 INTERNAL_ERROR` / "Tenant PermissionCheck Failed"** (new
+   2026-09-10): onboarding a real AWS account with the maintainer's own
+   real `LucidityPolicy` correctly attached, `skipCloudPermissionCheck`
+   unset (defaults false), failed reproducibly with this error — not in
+   any documented error table. `skipCloudPermissionCheck: true` bypasses
+   it. Unclear whether this is a real gap in the sample policy, an IAM
+   propagation-timing issue (the role/policy were only ~30 minutes old),
+   or a genuine bug on Lucidity's side. Needs following up with Lucidity
+   directly, and a retest once resolved (both to confirm the fix and to
+   get a real "correct permissions, check not skipped" pass — #6's
+   destructive cycle still needs this to actually complete cleanly).
 
 ## Style
 

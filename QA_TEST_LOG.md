@@ -10,14 +10,16 @@ notes" section; this file just tracks whether/when/how each case was run.
 **Status legend:** `Not run` / `Pass` / `Fail` / `Blocked` (needs something
 before it can run, noted in Notes).
 
-**Prerequisites before execution can start:**
-- A live `LUCIDITY_REFRESH_TOKEN` for a real Lucidity account.
-- Local Terraform pointed at a locally-built provider binary via
-  `dev_overrides` (no release has been cut — see CLAUDE.md).
-- The 4 real AWS accounts from `aws-terraform-account-creation` (3 pool
-  accounts with `LucidityRole`/`LucidityPolicy` already attached, plus
-  `testaccount1` — which needs that same IAM added before its onboard
-  tests can run; see CLAUDE.md).
+**Prerequisites — done as of 2026-09-10:**
+- ~~A live `LUCIDITY_REFRESH_TOKEN`~~ — have one, for the `Lucidity_Business`
+  account (`dash-back.lucidity.dev`).
+- ~~Local Terraform pointed at a locally-built provider binary via
+  `dev_overrides`~~ — working (no release has been cut yet — see CLAUDE.md).
+- ~~`LucidityRole`/`LucidityPolicy` on `testaccount1`~~ — added.
+- **New:** the account pool grew to 6: pool1–pool5 plus `testaccount1`.
+  pool4/pool5 sit under two new AWS Organizations OUs (`Lucidity-QA-Alpha`,
+  `Lucidity-QA-Beta`) rather than directly under root — see
+  `aws-terraform-account-creation`'s `lucidity_test_accounts.tf`.
 
 ## Execution order
 
@@ -25,8 +27,7 @@ Run top-to-bottom within each phase; phases are ordered by dependency, not
 by the section numbers below (e.g. an update test needs something already
 onboarded).
 
-1. **Phase 0 — setup:** confirm auth works end-to-end (5.1), add
-   `LucidityRole`/`LucidityPolicy` to `testaccount1`.
+1. ~~**Phase 0 — setup**~~ Done — see Prerequisites above.
 2. **Phase 1 — concurrency first:** 4.1, onboarding pool1/pool2/pool3
    together via `concurrency/main.tf`'s own state — do this *before*
    anything else touches those accounts, since it's a separate state and
@@ -56,12 +57,12 @@ onboarded).
 | ID | Test case | Status | Date | Notes / evidence |
 |---|---|---|---|---|
 | 1.1.1 | Onboard with `aws_org_root_id` set | Not run | | |
-| 1.1.2 | Onboard without `aws_org_root_id` | Not run | | |
+| 1.1.2 | Onboard without `aws_org_root_id` | Pass | 2026-09-10 | Onboarded pool1 (810100779479) against `Lucidity_Business`. Needed `skip_cloud_permission_check=true` to get past a new, undocumented `500 INTERNAL_ERROR` — see 1.1.5/1.1.6 and CLAUDE.md Open Q8. |
 | 1.1.3 | Onboard with a dummy/nonexistent AWS account number | Not run | | |
 | 1.1.4 | Onboard with a real account number but no IAM role/policy created | Not run | | |
-| 1.1.5 | Onboard with real account + role created, incorrect permissions, `skip_cloud_permission_check=false` | Not run | | |
-| 1.1.6 | Onboard with real account + role created, incorrect permissions, `skip_cloud_permission_check=true` | Not run | | |
-| 1.1.7 | Onboard with a real, correctly-permissioned role and policy (happy path) | Not run | | |
+| 1.1.5 | Onboard with real account + role created, incorrect permissions, `skip_cloud_permission_check=false` | Fail (unexpected) | 2026-09-10 | Tested with *correct* permissions (real `LucidityPolicy`), not incorrect ones — got `500 INTERNAL_ERROR` "Tenant PermissionCheck Failed" instead of the documented behavior either way. New, undocumented failure mode — CLAUDE.md Open Q8. Reproduced twice, not transient. |
+| 1.1.6 | Onboard with real account + role created, incorrect permissions, `skip_cloud_permission_check=true` | Pass | 2026-09-10 | Confirmed this flag bypasses the 1.1.5 failure specifically — onboard proceeded to a real `201 Created`. Still tested against *correct* permissions, not incorrect — the "incorrect permissions" half of this case is still open. |
+| 1.1.7 | Onboard with a real, correctly-permissioned role and policy (happy path) | Blocked | 2026-09-10 | Blocked by the same Open Q8 failure — a real, correctly-permissioned role hit `500 INTERNAL_ERROR` with the permission check enabled (default). Only succeeded with `skip_cloud_permission_check=true`, which isn't the intended happy path. Also surfaced and fixed a real bug: the follow-up list-and-match had no retry tolerance for a propagation delay, so this successful onboard initially came back as a Terraform-level failure with the tenant left untracked (recovered via `terraform import`; see `internal/provider/resource_tenant.go`'s `refreshFromList`). |
 | 1.1.8 | Onboard with `aws_iam_role_name` pointing at a role name that doesn't exist | Not run | | |
 | 1.1.9 | Onboard with a mismatched `aws_iam_external_id` (doesn't match trust policy) | Not run | | |
 | 1.1.10 | Onboard with `aws_iam_external_id` in a non-UUID format | Not run | | |
@@ -113,22 +114,22 @@ onboarded).
 
 | ID | Test case | Status | Date | Notes / evidence |
 |---|---|---|---|---|
-| 2.1 | Import an existing ACTIVE tenant | Not run | | |
+| 2.1 | Import an existing ACTIVE tenant | Pass | 2026-09-10 | Imported pool1's tenant (onboarded out-of-band relative to the local config, per 1.1.7's aborted apply) via `terraform import lucidity_tenant.under_test AWS/810100779479`. Warning message matched design exactly. |
 | 2.2 | Import with a malformed import ID | Not run | | |
 | 2.3 | Import with the cloud provider in the wrong case | Not run | | |
 | 2.4 | Import with extraneous whitespace in the ID string | Not run | | |
 | 2.5 | Import an account/tenant combination that doesn't exist | Not run | | |
 | 2.6 | Import an INACTIVE tenant | Not run | | |
 | 2.7 | Import the same resource address twice | Not run | | |
-| 2.8 | Import, then apply with mismatched `external_id`/`product_list` | Not run | | |
+| 2.8 | Import, then apply with mismatched `external_id`/`product_list` | Pass | 2026-09-10 | After 2.1's import, `plan` against the real original values (which import couldn't recover) correctly showed a forced replace — exactly as designed, since state had them null post-import. Did not actually apply (would attempt a real destroy — safely blocked by `account_delete_protection=true` anyway, but not worth exercising for real). |
 | 2.9 | Import, then write a config missing required AWS-only fields | Not run | | |
 
 ## 3. Data source tests
 
 | ID | Test case | Status | Date | Notes / evidence |
 |---|---|---|---|---|
-| 3.1 | `lucidity_tenants` with mixed ACTIVE/INACTIVE tenants | Not run | | |
-| 3.2 | `lucidity_tenants` field-by-field accuracy check | Not run | | |
+| 3.1 | `lucidity_tenants` with mixed ACTIVE/INACTIVE tenants | Pass | 2026-09-10 | Real `Lucidity_Business` account had 8 pre-existing tenants (AWS/AZURE/GCP), all INACTIVE, plus pool1 ACTIVE after 1.1.7/2.1 — all listed correctly. |
+| 3.2 | `lucidity_tenants` field-by-field accuracy check | Pass | 2026-09-10 | Fields matched the real dashboard data (`cloud_entity_name`, `display_name`, `status`, provider) for all 9 tenants observed. |
 | 3.3 | Cross-reference data source vs. resource in the same config | Not run | | |
 
 ## 4. Concurrency tests
@@ -142,6 +143,6 @@ onboarded).
 
 | ID | Test case | Status | Date | Notes / evidence |
 |---|---|---|---|---|
-| 5.1 | Full apply cycle — end-to-end auth sanity check | Not run | | |
+| 5.1 | Full apply cycle — end-to-end auth sanity check | Pass | 2026-09-10 | Real refresh token against `dash-back.lucidity.dev` (`Lucidity_Business` account) — token exchange, access token use, and retries all worked correctly through a full session of applies/imports. |
 | 5.2 | Deliberately invalid/expired refresh token | Not run | | |
 | 5.3 | Long-running apply spanning the proactive refresh buffer | Not run | | Schedule deliberately — needs 15+ min wall clock |

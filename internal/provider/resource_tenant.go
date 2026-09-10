@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -565,23 +566,48 @@ func (r *tenantResource) Delete(ctx context.Context, req resource.DeleteRequest,
 // server-side fields. Shared by Create and Update because cloud_entity_name
 // is only ever available from List, never from onboard/update responses,
 // and this keeps one source of truth for "what does the server say now."
+// refreshFromListRetries/Delay: live-tested 2026-09-10 against a real
+// account — a successful onboard is not always immediately visible on the
+// very next List call (server-side propagation delay). A single unretried
+// list-and-match previously turned a genuinely successful onboard into a
+// hard Terraform error, with the newly-onboarded tenant left real but
+// completely untracked in state (discovered the hard way; had to
+// `terraform import` it back). A few short retries costs at most a couple
+// of seconds in the overwhelmingly common case where it's already visible.
+const (
+	refreshFromListRetries = 4
+	refreshFromListDelay   = 2 * time.Second
+)
+
 func (r *tenantResource) refreshFromList(ctx context.Context, cloudProvider, accountID string, model *tenantResourceModel) diag.Diagnostics {
 	var diags diag.Diagnostics
-	tenants, err := r.client.ListTenants(ctx)
-	if err != nil {
-		diags.AddError("Unable to list Lucidity tenants", err.Error())
-		return diags
+	for attempt := 0; ; attempt++ {
+		tenants, err := r.client.ListTenants(ctx)
+		if err != nil {
+			diags.AddError("Unable to list Lucidity tenants", err.Error())
+			return diags
+		}
+		if found, ok := client.FindTenant(tenants, cloudProvider, accountID); ok {
+			applyListItem(model, found)
+			return diags
+		}
+		if attempt >= refreshFromListRetries-1 {
+			diags.AddError(
+				"Lucidity tenant not found immediately after apply",
+				fmt.Sprintf(
+					"Cloud account %s was not found in a follow-up list call after %d attempts over %s, despite the API reporting success. This may be an unusually long propagation delay — retry the apply (it will hit the ACTIVE-duplicate pre-check if the onboard truly went through, which confirms that), or check the Lucidity dashboard directly and `terraform import` it if it's there.",
+					accountID, refreshFromListRetries, time.Duration(refreshFromListRetries)*refreshFromListDelay,
+				),
+			)
+			return diags
+		}
+		select {
+		case <-time.After(refreshFromListDelay):
+		case <-ctx.Done():
+			diags.AddError("Unable to list Lucidity tenants", ctx.Err().Error())
+			return diags
+		}
 	}
-	found, ok := client.FindTenant(tenants, cloudProvider, accountID)
-	if !ok {
-		diags.AddError(
-			"Lucidity tenant not found immediately after apply",
-			fmt.Sprintf("Cloud account %s was not found in a follow-up list call right after the API reported success. This may be a brief propagation delay — retry the apply, or check the Lucidity dashboard directly.", accountID),
-		)
-		return diags
-	}
-	applyListItem(model, found)
-	return diags
 }
 
 func applyListItem(model *tenantResourceModel, item client.TenantListItem) {
