@@ -79,6 +79,16 @@ jobs:
           git add -A
           git commit -m "Promote ${{ steps.version.outputs.tag }} from Devaansh/terraform-provider-lucidity"
 
+      - name: Clear actions/checkout's injected auth header
+        # actions/checkout sets an Authorization header (via git config)
+        # carrying the job's own GITHUB_TOKEN for github.com, which takes
+        # precedence over credentials embedded in a push URL - even for a
+        # completely different repo. Left in place, the pushes below
+        # silently authenticate as this job's GITHUB_TOKEN instead of the
+        # PAT, failing with "Permission ... denied to github-actions[bot]"
+        # regardless of how correctly the PAT itself is scoped.
+        run: git config --local --unset-all http.https://github.com/.extraheader
+
       - name: Push to luciditycloud main
         run: |
           git push "https://x-access-token:${LUCIDITYCLOUD_PUSH_TOKEN}@${STABLE_REPO_URL#https://}" HEAD:main --force

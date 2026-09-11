@@ -9,6 +9,22 @@ once it reaches a stable release cadence.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-09-12
+
+_Author: Devaansh Goenka._
+
+### Fixed
+
+- `promote-to-stable.yml`'s push to `luciditycloud/terraform-provider-lucidity`
+  was silently authenticating as the job's own `GITHUB_TOKEN` instead of the
+  `LUCIDITYCLOUD_PUSH_TOKEN` PAT, failing with "Permission ... denied to
+  github-actions[bot]" regardless of how the PAT was scoped.
+  `actions/checkout` injects an `Authorization` header for `github.com` via
+  git config that takes precedence over credentials embedded in a push
+  URL, even for an unrelated repo. Fixed by clearing that header
+  (`git config --local --unset-all http.https://github.com/.extraheader`)
+  before pushing to the stable repo.
+
 ## [0.1.3] - 2026-09-11
 
 _Author: Devaansh Goenka._
