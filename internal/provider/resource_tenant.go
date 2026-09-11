@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -31,6 +32,14 @@ var (
 	_ resource.ResourceWithValidateConfig = &tenantResource{}
 	_ resource.ResourceWithModifyPlan     = &tenantResource{}
 )
+
+// uuidPattern validates aws_iam_external_id client-side. Live testing
+// confirmed Lucidity's own onboard API applies no server-side format check
+// on this field at all (a non-UUID string is silently accepted, then only
+// fails much later — and ambiguously — when AssumeRole's trust-policy
+// condition doesn't match). Catching an obvious typo at plan time, before
+// any API call, is strictly better than that ambiguous downstream failure.
+var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 func newTenantResource() resource.Resource {
 	return &tenantResource{}
@@ -115,9 +124,12 @@ func (r *tenantResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					},
 					"aws_iam_external_id": schema.StringAttribute{
 						Optional: true,
-						Description: "AWS only — required for onboarding, ignored for AZURE/GCP. A unique ID you generate and put in your IAM role's trust policy (a UUID works). Lucidity sends it on every AssumeRole so your role only trusts requests carrying it. " +
+						Description: "AWS only — required for onboarding, ignored for AZURE/GCP. Must be a UUID (Lucidity's own API applies no format check server-side, so this provider validates it client-side to catch typos before any API call). Generate one yourself and put it in your IAM role's trust policy. Lucidity sends it on every AssumeRole so your role only trusts requests carrying it. " +
 							"Immutable forever once onboarded — Lucidity never returns this value again (write-only) and never applies a changed one via update, so this provider cannot detect drift on it and treats any config change as requiring a full replace (destroy + re-onboard). " +
 							"terraform import cannot recover this value; you must supply the real one that matches your IAM role's trust policy, or the very next apply will force a replace.",
+						Validators: []validator.String{
+							stringvalidator.RegexMatches(uuidPattern, "must be a valid UUID (e.g. 8f14e45f-ceea-4331-9f5e-111111111111)"),
+						},
 						PlanModifiers: []planmodifier.String{
 							stringplanmodifier.RequiresReplace(),
 						},

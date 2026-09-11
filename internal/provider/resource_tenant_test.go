@@ -226,6 +226,38 @@ func TestTenantResourceRPC_ValidateConfig_RejectsUnsupportedProduct(t *testing.T
 	}
 }
 
+func TestTenantResourceRPC_ValidateConfig_RejectsNonUUIDExternalID(t *testing.T) {
+	srv := newTestProviderServer(t)
+	resp, err := srv.ValidateResourceConfig(context.Background(), &tfprotov6.ValidateResourceConfigRequest{
+		TypeName: tenantResourceTypeName,
+		Config: tenantConfigValue(t, nil, map[string]tftypes.Value{
+			"aws_iam_external_id": strVal("not-a-uuid"),
+		}),
+	})
+	if err != nil {
+		t.Fatalf("ValidateResourceConfig: %v", err)
+	}
+	if !hasErrorDiagnostic(resp.Diagnostics) {
+		t.Fatalf("expected an error diagnostic for a non-UUID aws_iam_external_id, got: %+v", resp.Diagnostics)
+	}
+}
+
+func TestTenantResourceRPC_ValidateConfig_AcceptsUUIDExternalID(t *testing.T) {
+	srv := newTestProviderServer(t)
+	resp, err := srv.ValidateResourceConfig(context.Background(), &tfprotov6.ValidateResourceConfigRequest{
+		TypeName: tenantResourceTypeName,
+		Config: tenantConfigValue(t, nil, map[string]tftypes.Value{
+			"aws_iam_external_id": strVal("8f14e45f-ceea-4331-9f5e-111111111111"),
+		}),
+	})
+	if err != nil {
+		t.Fatalf("ValidateResourceConfig: %v", err)
+	}
+	if hasErrorDiagnostic(resp.Diagnostics) {
+		t.Fatalf("expected no error diagnostic for a valid UUID aws_iam_external_id, got: %+v", resp.Diagnostics)
+	}
+}
+
 func TestTenantResourceRPC_ValidateConfig_RejectsInvalidDestroyBehavior(t *testing.T) {
 	srv := newTestProviderServer(t)
 	resp, err := srv.ValidateResourceConfig(context.Background(), &tfprotov6.ValidateResourceConfigRequest{

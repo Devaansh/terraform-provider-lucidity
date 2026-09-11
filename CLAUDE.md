@@ -289,8 +289,12 @@ Created`. Deboard endpoint: `PUT /external/client/api/v1/tenants/deboard` →
 - `aws_iam_external_id` (in `cloud_entity_information`, **required for AWS
   onboarding, `Optional` at the schema level** — enforced via `ValidateConfig`
   instead, so AZURE/GCP resources aren't forced to set it): a value the
-  practitioner generates (a UUID
-  works) and places in the target IAM role's trust policy; Lucidity sends it
+  practitioner generates (must be a UUID — enforced by a
+  `stringvalidator.RegexMatches` schema validator added 2026-09-11, since
+  live testing confirmed Lucidity's own API applies no format check on this
+  field server-side and a malformed value would otherwise only surface much
+  later, ambiguously, as an AssumeRole trust-policy mismatch) and places it
+  in the target IAM role's trust policy; Lucidity sends it
   on every `AssumeRole`. **Write-only on the real API** — never returned by
   onboard, update, or list responses, and update silently keeps the
   onboarding-time value forever regardless of what's sent (see "Update

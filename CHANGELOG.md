@@ -9,8 +9,10 @@ once it reaches a stable release cadence.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-11
+
 _Author: Devaansh Goenka._ Everything below has landed on `main` since
-v0.1.1 but has not yet been cut as a release.
+v0.1.1.
 
 ### Added
 
@@ -51,6 +53,11 @@ v0.1.1 but has not yet been cut as a release.
   directory in its expected layout.
 - A CI check that regenerates the docs and fails the build if they've
   drifted from the schema or `examples/`.
+- Client-side UUID format validation on `aws_iam_external_id`. Live testing
+  against a real Lucidity account confirmed the onboard API applies no
+  format check on this field server-side at all — a malformed value was
+  previously only caught much later, and ambiguously, as an AssumeRole
+  trust-policy mismatch. Now rejected at `terraform plan` time instead.
 
 ### Changed
 
@@ -77,6 +84,39 @@ v0.1.1 but has not yet been cut as a release.
   though both share HTTP 401 and `error.code` `UNAUTHORIZED`) was
   previously masked behind the generic expired-refresh-token error message,
   losing the real error message and `requestId`. Now surfaced correctly.
+- `refreshFromList` (the shared Create/Update post-mutation list-and-match)
+  had no retry tolerance for Lucidity's List-endpoint propagation delay
+  after a mutation — a genuinely successful onboard/update could come back
+  as a hard Terraform error with the tenant left real but completely
+  untracked in state. Fixed with a bounded retry, widened twice as live
+  testing showed the propagation delay regularly running from tens of
+  seconds to a couple of minutes: 4×2s → 8×3s → the current 10×15s
+  (150s total).
+- A stale-data acceptance bug in that same retry loop: after a successful
+  `Update()` PATCH, a retry could match a List entry that was itself a
+  pre-update snapshot, writing stale field values into state and triggering
+  Terraform's "Provider produced inconsistent result after apply" error.
+  Fixed by adding a `fresh` verification callback so `Update()` only accepts
+  a list entry matching what was just requested, retrying otherwise.
+
+### Testing
+
+- A ~60-case live QA test matrix run against real AWS accounts and a real
+  Lucidity account, covering onboard/modify/deboard/import/data-source/
+  concurrency scenarios for `lucidity_tenant`/`lucidity_tenants`. Results
+  tracked per provider section in `docs/qa-testing/`.
+- Mock-backed resource lifecycle tests
+  (`internal/provider/resource_tenant_lifecycle_test.go`) driving
+  `Create`/`Read`/`Update`/`Delete`/`ImportState` directly against a
+  stateful mock server.
+
+### Docs
+
+- Reorganized documentation around the provider's functional sections
+  (Authentication management, Account management, and more planned):
+  `README.md` now has usage sections for both, plus a sections/roadmap
+  table; QA test logs moved from one flat file into
+  `docs/qa-testing/<section>.md`, one per section.
 
 ### Research / design record
 
