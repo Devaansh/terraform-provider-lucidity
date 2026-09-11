@@ -3,8 +3,26 @@
 Terraform provider for Lucidity (cloud storage optimization platform). 
 Published to the public Terraform Registry as a community provider, built to Partner-tier quality
 
-Stable version published at `registry.terraform.io/luciditycloud/lucidity`; pull it from there to
-try it out.
+Two Registry namespaces:
+
+- `registry.terraform.io/Devaansh/lucidity` — **beta**, published from this
+  repo on every release (currently the only one that's live — see
+  [CHANGELOG.md](CHANGELOG.md) for version history).
+- `registry.terraform.io/luciditycloud/lucidity` — **official stable**,
+  once published.
+
+Pull whichever matches your risk tolerance:
+
+```hcl
+terraform {
+  required_providers {
+    lucidity = {
+      source  = "Devaansh/lucidity" # or "luciditycloud/lucidity" once stable
+      version = "~> 0.1"
+    }
+  }
+}
+```
 
 
 About Lucidity - https://www.lucidity.cloud/
