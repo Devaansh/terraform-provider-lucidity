@@ -45,7 +45,7 @@ jobs:
           cache: true
 
       - name: Remove files excluded from the stable repo
-        run: rm -f CLAUDE.md RELEASING.md
+        run: rm -rf CLAUDE.md RELEASING.md .vscode
 
       - name: Rewrite Devaansh namespace to luciditycloud
         run: |

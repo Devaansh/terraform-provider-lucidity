@@ -130,9 +130,10 @@ step from here, never automatic.
 2. Actions tab → **Promote to luciditycloud stable** → Run workflow.
 3. This (`.github/workflows/promote-to-stable.yml`) rewrites the Go module
    path and provider address from `Devaansh/lucidity` to
-   `luciditycloud/lucidity` throughout the tree, drops `CLAUDE.md` and this
-   file (`RELEASING.md`) since neither belongs in the stable repo, verifies
-   the rewrite still builds and tests clean, regenerates the Registry docs,
+   `luciditycloud/lucidity` throughout the tree, drops `CLAUDE.md`,
+   `RELEASING.md` (this file), and `.vscode/` since none of them belong in
+   the stable repo, verifies the rewrite still builds and tests clean,
+   regenerates the Registry docs,
    and force-pushes the result to the stable repo's `main` plus the same
    version tag — which fires that repo's own `ci.yml`/`release.yml` exactly
    as a normal push would (pushing with a PAT isn't subject to the

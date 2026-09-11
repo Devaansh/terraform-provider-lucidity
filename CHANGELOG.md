@@ -9,6 +9,12 @@ once it reaches a stable release cadence.
 
 ## [Unreleased]
 
+### Fixed
+
+- `promote-to-stable.yml` now also drops `.vscode/` from what's pushed to
+  the stable repo — it's local editor config, not something that belongs
+  in the promoted tree, same reasoning as `CLAUDE.md`/`RELEASING.md`.
+
 ## [0.1.4] - 2026-09-12
 
 _Author: Devaansh Goenka._
