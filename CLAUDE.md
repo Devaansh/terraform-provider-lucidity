@@ -546,7 +546,12 @@ for the auth-sanity cases); notable findings not obvious from the doc:
   gap" behavior). `account_delete_protection`'s default-true blocked the
   destroy phase every time this was missed, so nothing was ever actually
   lost, but see `docs/qa-testing/account-management.md`'s methodology note under
-  section 1.2 for the full account.
+  section 1.2 for the full account. **Recurred on pool4/pool5** (the
+  concurrency test's own imports) and was caught the same way — this time
+  surfaced while validating the real published `v0.1.2` binary against
+  `concurrency/`'s existing state, not during active test execution, which
+  is itself a good argument for patching write-only fields right after
+  every import rather than only when about to run a specific modify test.
 
 ### Live API testing notes (2026-09-06)
 
