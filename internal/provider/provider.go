@@ -1,6 +1,6 @@
 // Package provider implements the Lucidity Terraform provider: Phase 1's
 // authentication layer, plus Phase 2's lucidity_tenant resource and
-// lucidity_tenants data source (see CLAUDE.md for the full design record).
+// lucidity_tenants data source.
 package provider
 
 import (
@@ -112,7 +112,7 @@ func (p *LucidityProvider) Schema(_ context.Context, _ provider.SchemaRequest, r
 			},
 			"lucidity_dashboard_account_name": schema.StringAttribute{
 				Required:    true,
-				Description: "The Lucidity dashboard account this refresh token is expected to belong to. Intended to catch a wrong-account refresh token before any tenant operation runs; the provider cannot yet cross-validate this against the token itself (no Lucidity endpoint currently exposes which account a token belongs to — see CLAUDE.md open questions), so today this is recorded but not enforced.",
+				Description: "The Lucidity dashboard account this refresh token is expected to belong to. Intended to catch a wrong-account refresh token before any tenant operation runs; the provider cannot yet cross-validate this against the token itself (no Lucidity endpoint currently exposes which account a token belongs to), so today this is recorded but not enforced.",
 			},
 		},
 	}

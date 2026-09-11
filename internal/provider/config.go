@@ -17,9 +17,9 @@ const envRefreshToken = "LUCIDITY_REFRESH_TOKEN"
 // tests can shrink it instead of waiting out the real timeout.
 var execCommandTimeout = 30 * time.Second
 
-// resolveRefreshToken implements the locked token-source precedence from
-// CLAUDE.md ("Token-source precedence"): exactly one of refreshToken,
-// refreshTokenFile, or refreshTokenCommand may be set — that mutual
+// resolveRefreshToken implements the locked token-source precedence:
+// exactly one of refreshToken, refreshTokenFile, or refreshTokenCommand may
+// be set — that mutual
 // exclusivity is enforced separately by a provider ConfigValidator before
 // Configure ever calls this. If none of the three are set, fall back to the
 // LUCIDITY_REFRESH_TOKEN env var.

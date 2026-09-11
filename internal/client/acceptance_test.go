@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// TestAcceptance_ListTenants is the Phase 1 gated smoke test from CLAUDE.md:
-// one authenticated GET /external/client/api/v1/tenants against a real
+// TestAcceptance_ListTenants is the Phase 1 gated smoke test: one
+// authenticated GET /external/client/api/v1/tenants against a real
 // Lucidity account. Skipped unless TF_ACC=1, per the project's testing
 // conventions (sandbox/demo accounts are treated as live — this hits real
 // infrastructure, not a mock).

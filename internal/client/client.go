@@ -36,7 +36,7 @@ type envelopeError struct {
 }
 
 // APIError is a parsed Lucidity API error, carrying the requestId needed for
-// support escalation per CLAUDE.md.
+// support escalation.
 type APIError struct {
 	HTTPStatus int
 	Code       string
@@ -61,8 +61,8 @@ func parseErrorBody(status int, body []byte) error {
 			RequestID:  env.RequestID,
 		}
 	}
-	// Render unmapped/unparseable bodies generically but completely, per
-	// CLAUDE.md (CONFLICT semantics in particular are unconfirmed upstream).
+	// Render unmapped/unparseable bodies generically but completely
+	// (CONFLICT semantics in particular are unconfirmed upstream).
 	return &APIError{
 		HTTPStatus: status,
 		Code:       "UNKNOWN",
@@ -232,7 +232,7 @@ func (c *Client) Do(ctx context.Context, method, path string, body any, out any)
 			if _, err := c.tokens.ForceRefresh(ctx, token); err != nil {
 				return err
 			}
-			continue // single sanctioned retry, per CLAUDE.md — doesn't consume attempt
+			continue // single sanctioned retry — doesn't consume the 5xx attempt budget
 		case status == http.StatusUnauthorized:
 			// Same HTTP status and error.code (UNAUTHORIZED) cover two
 			// unrelated conditions on tenant endpoints: a bad/expired access

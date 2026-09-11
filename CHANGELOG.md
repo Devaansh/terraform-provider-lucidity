@@ -85,7 +85,7 @@ v0.1.1 but has not yet been cut as a release.
   (2026-09-06): confirmed `CONFLICT` error-code semantics, confirmed the
   update API is a single unified `PATCH` endpoint (not the two-API split
   originally planned), confirmed Lucidity's rate limits, confirmed onboard
-  is create-only. See `CLAUDE.md` for the full record.
+  is create-only.
 
 ## [0.1.1] - 2026-09-05
 

@@ -21,7 +21,7 @@ Lucidity's own product is organized into functional sections; this
 provider's phases map onto them, and future phases will keep following this
 list rather than being organized purely around Terraform resource
 boundaries. QA test logs are organized the same way — see
-[docs/qa/README.md](docs/qa/README.md).
+[docs/qa-testing/README.md](docs/qa-testing/README.md).
 
 | Section | Provider phase | Status |
 |---|---|---|
@@ -504,7 +504,7 @@ real `LucidityRole`/`LucidityPolicy` from the maintainer's own IAM sample).
 Continued the Phase 12 QA campaign through the remaining test matrix —
 modify, deboard, import-edge-case, and data-source cross-reference cases —
 against pool1/pool2/pool3. Full per-case results in
-`docs/qa/account-management.md` (and `docs/qa/authentication-management.md`
+`docs/qa-testing/account-management.md` (and `docs/qa-testing/authentication-management.md`
 for the auth-sanity cases); notable findings not obvious from the doc:
 
 - **Open Question #7 resolved:** `aws_org_root_id` is accepted on a real
@@ -541,7 +541,7 @@ for the auth-sanity cases); notable findings not obvious from the doc:
   instead of an in-place update (exactly per the documented "Known import
   gap" behavior). `account_delete_protection`'s default-true blocked the
   destroy phase every time this was missed, so nothing was ever actually
-  lost, but see `docs/qa/account-management.md`'s methodology note under
+  lost, but see `docs/qa-testing/account-management.md`'s methodology note under
   section 1.2 for the full account.
 
 ### Live API testing notes (2026-09-06)
@@ -595,8 +595,8 @@ identity mechanism).
 - **Live QA campaign (started 2026-09-10):** a ~60-case manual test matrix
   against 4 real AWS accounts (3 disposable pool accounts plus
   `testaccount1`, provisioned by `aws-terraform-account-creation`) and a
-  real Lucidity account, tracked per-section in `docs/qa/` (status per case,
-  not duplicated here — see `docs/qa/README.md`) with a
+  real Lucidity account, tracked per-section in `docs/qa-testing/` (status per case,
+  not duplicated here — see `docs/qa-testing/README.md`) with a
   `~/Desktop/terraform testing/` config refreshed
   for Phase 2 (`provider.tf`/`variables.tf`/`lucidity_tenant.tf`/
   `datasource.tf` plus `testvars/`, `concurrency/`, `import/` — see that
@@ -634,7 +634,7 @@ identity mechanism).
    re-onboard-conflict (1.3.5) cycle has now been exercised end-to-end
    against pool1/pool3, including the idempotent re-deboard case (1.3.4)
    and out-of-band-deboard drift detection (1.3.6/1.3.7). See
-   `docs/qa/account-management.md` section 1.3 and the 2026-09-11 live
+   `docs/qa-testing/account-management.md` section 1.3 and the 2026-09-11 live
    testing notes above.
 7. ~~`aws_org_root_id` on the real onboard payload~~ **Resolved 2026-09-10:**
    accepted — a real onboard call with `aws_org_root_id` set succeeded

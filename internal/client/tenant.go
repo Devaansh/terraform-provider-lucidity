@@ -167,7 +167,8 @@ type DeboardResult struct {
 
 // DeboardTenant marks a tenant INACTIVE. Idempotent: deboarding an
 // already-inactive tenant succeeds (Status == DeboardStatusAlreadyDeBoarded)
-// rather than erroring. IRREVERSIBLE via API — see CLAUDE.md.
+// rather than erroring. IRREVERSIBLE via API — an INACTIVE tenant can only
+// be reactivated by Lucidity support.
 func (c *Client) DeboardTenant(ctx context.Context, cloudProvider, cloudProviderAccountID string) (*DeboardResult, error) {
 	req := DeboardTenantRequest{CloudEntityInformation: CloudEntityInformation{
 		CloudProvider:          cloudProvider,

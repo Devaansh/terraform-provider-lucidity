@@ -361,8 +361,8 @@ func mustList(t *testing.T, c *client.Client, ctx context.Context) []client.Tena
 // TestLifecycle_ReadDetectsOutOfBandDeboard confirms Read() — not just
 // Delete() — correctly surfaces a tenant that went INACTIVE some other way
 // (e.g. deboarded directly via the API, outside Terraform entirely): kept
-// in state with its real status, plus an error diagnostic, per CLAUDE.md's
-// INACTIVE handling design.
+// in state with its real status, plus an error diagnostic, per the
+// resource's INACTIVE handling design.
 func TestLifecycle_ReadDetectsOutOfBandDeboard(t *testing.T) {
 	srv, mock := newMockLucidityServer(t)
 	c := client.NewClient(srv.URL, "test-token", client.WithHTTPClient(srv.Client()))

@@ -8,7 +8,7 @@ doc covers the one-time setup and the steps for each release.
 
 ### 1. Generate a dedicated release-signing GPG key
 
-Per CLAUDE.md, this must be a **dedicated key for this provider's releases**
+This must be a **dedicated key for this provider's releases**
 — not the maintainer's personal GPG key. The Terraform Registry keeps this
 key's public half on file to verify every release signature, so treat it as
 project infrastructure, not a personal credential.

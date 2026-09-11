@@ -303,10 +303,9 @@ func (r *tenantResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 
 func (r *tenantResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	// Expected form: "<cloud_provider>/<cloud_provider_account_id>", e.g.
-	// "AWS/123456789012" or "AZURE/<subscription-id>" or "GCP/<project-id>" —
-	// matches CLAUDE.md's locked Import design. This is also the ONLY way an
-	// AZURE/GCP tenant enters Terraform at all, since onboarding (Create) is
-	// AWS-only.
+	// "AWS/123456789012" or "AZURE/<subscription-id>" or "GCP/<project-id>".
+	// This is also the ONLY way an AZURE/GCP tenant enters Terraform at all,
+	// since onboarding (Create) is AWS-only.
 	parts := strings.SplitN(req.ID, "/", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		resp.Diagnostics.AddError(
@@ -320,9 +319,8 @@ func (r *tenantResource) ImportState(ctx context.Context, req resource.ImportSta
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("cloud_entity_information").AtName("cloud_provider"), cloudProvider)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("cloud_entity_information").AtName("cloud_provider_account_id"), accountID)...)
 	// Imported resources get lucidity_dashboard_account_delete_protection = true regardless of
-	// whatever the eventual config says, until the first apply — per
-	// CLAUDE.md's locked Import design — so an import can never be
-	// immediately followed by an accidental destroy.
+	// whatever the eventual config says, until the first apply — so an
+	// import can never be immediately followed by an accidental destroy.
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("lucidity_dashboard_account_delete_protection"), true)...)
 
 	resp.Diagnostics.AddWarning(
@@ -356,10 +354,10 @@ func (r *tenantResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
-	// Pre-check kept per CLAUDE.md even though onboard's own 409 CONFLICT
-	// now covers both cases natively: this list-and-match stays the primary
-	// mechanism, the API's native 409 below is a defense-in-depth backstop
-	// for the race window between this check and the actual onboard call.
+	// Pre-check kept even though onboard's own 409 CONFLICT now covers both
+	// cases natively: this list-and-match stays the primary mechanism, the
+	// API's native 409 below is a defense-in-depth backstop for the race
+	// window between this check and the actual onboard call.
 	tenants, err := r.client.ListTenants(ctx)
 	if err != nil {
 		resp.Diagnostics.AddError("Unable to list existing Lucidity tenants", err.Error())
@@ -415,7 +413,7 @@ func (r *tenantResource) Read(ctx context.Context, req resource.ReadRequest, res
 	cloudProvider := state.CloudEntityInformation.CloudProvider.ValueString()
 	accountID := state.CloudEntityInformation.CloudProviderAccountID.ValueString()
 
-	// No GET-by-ID exists — list and match, per CLAUDE.md.
+	// No GET-by-ID exists — list and match.
 	tenants, err := r.client.ListTenants(ctx)
 	if err != nil {
 		resp.Diagnostics.AddError("Unable to list Lucidity tenants", err.Error())
@@ -644,9 +642,9 @@ func applyListItem(model *tenantResourceModel, item client.TenantListItem) {
 	model.CloudEntityInformation.CloudProviderAccountID = types.StringValue(item.CloudProviderAccountID)
 }
 
-// addExistingTenantError distinguishes the two pre-check outcomes per
-// CLAUDE.md: an ACTIVE duplicate is a config error (most likely a for_each/
-// key collision), while an INACTIVE/DECOMMISSIONED one needs the
+// addExistingTenantError distinguishes the two pre-check outcomes: an
+// ACTIVE duplicate is a config error (most likely a for_each/key
+// collision), while an INACTIVE/DECOMMISSIONED one needs the
 // support-contact framing — re-onboarding is not possible via API.
 func addExistingTenantError(diags *diag.Diagnostics, existing client.TenantListItem, accountID string) {
 	if existing.Status == client.TenantStatusActive {

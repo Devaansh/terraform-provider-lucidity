@@ -35,7 +35,7 @@ provider "lucidity" {
 
 ### Required
 
-- `lucidity_dashboard_account_name` (String) The Lucidity dashboard account this refresh token is expected to belong to. Intended to catch a wrong-account refresh token before any tenant operation runs; the provider cannot yet cross-validate this against the token itself (no Lucidity endpoint currently exposes which account a token belongs to — see CLAUDE.md open questions), so today this is recorded but not enforced.
+- `lucidity_dashboard_account_name` (String) The Lucidity dashboard account this refresh token is expected to belong to. Intended to catch a wrong-account refresh token before any tenant operation runs; the provider cannot yet cross-validate this against the token itself (no Lucidity endpoint currently exposes which account a token belongs to), so today this is recorded but not enforced.
 - `lucidity_dashboard_url` (String) The URL you use to log in to the Lucidity dashboard. Determines the API base URL the provider talks to — there is no separate base-URL setting. Must be exactly one of: https://www.web.lucidity.dev/dashboard, https://web-azurepls.lucidity.cloud/dashboard, https://app.lucidity.cloud, https://in.app.lucidity.cloud, https://eu.app.lucidity.cloud.
 
 ### Optional

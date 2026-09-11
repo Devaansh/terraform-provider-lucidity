@@ -21,7 +21,7 @@ const AccessTokenTTL = 15 * time.Minute
 
 // DefaultProactiveRefreshAge is how long to wait before renewing an access
 // token when the provider's proactive_refresh_buffer_minutes attribute is
-// unset — a 3-minute buffer ahead of the real expiry, per CLAUDE.md.
+// unset — a 3-minute buffer ahead of the real expiry.
 const DefaultProactiveRefreshAge = AccessTokenTTL - 3*time.Minute
 
 // AuthFailedMessage is the required, verbatim diagnostic text for a 401
@@ -167,7 +167,7 @@ type refreshResponseBody struct {
 
 // doRefresh exchanges the refresh token for a new access token, retrying 5xx
 // responses with backoff exactly like Client.Do does for every other
-// endpoint (CLAUDE.md's retry policy isn't specific to non-auth calls).
+// endpoint (the retry policy below isn't specific to non-auth calls).
 // Deliberately does not retry raw transport errors — same policy as Do.
 func (m *TokenManager) doRefresh(ctx context.Context) (string, error) {
 	reqBody, err := json.Marshal(refreshRequestBody{RefreshToken: m.refreshToken})
