@@ -98,7 +98,12 @@ jobs:
       - name: Tag and push the matching version to luciditycloud
         run: |
           TAG="${{ steps.version.outputs.tag }}"
-          git tag -a "$TAG" -m "$TAG"
+          # -f: fetch-depth: 0 above also fetched this same tag name from
+          # Devaansh's own origin (pointing at the pre-rewrite commit), so
+          # the local tag ref already exists here and needs overwriting.
+          # This is a throwaway CI checkout - never touches Devaansh's real
+          # tag.
+          git tag -f -a "$TAG" -m "$TAG"
           git push "https://x-access-token:${LUCIDITYCLOUD_PUSH_TOKEN}@${STABLE_REPO_URL#https://}" "$TAG" --force
         env:
           LUCIDITYCLOUD_PUSH_TOKEN: ${{ secrets.LUCIDITYCLOUD_PUSH_TOKEN }}

@@ -9,6 +9,24 @@ once it reaches a stable release cadence.
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-09-12
+
+_Author: Devaansh Goenka._
+
+### Fixed
+
+- `promote-to-stable.yml`'s tag-push step failed with "tag 'vX.Y.Z' already
+  exists" — `fetch-depth: 0` in the checkout step also fetches Devaansh's
+  own existing tag of the same name (pointing at the pre-rewrite commit),
+  colliding with the new local tag this workflow creates for the
+  promotion commit. Fixed with `git tag -f` to overwrite the local ref;
+  never touches Devaansh's real tag, since this checkout is discarded at
+  the end of the job.
+
+## [0.1.5] - 2026-09-12
+
+_Author: Devaansh Goenka._
+
 ### Fixed
 
 - `promote-to-stable.yml` now also drops `.vscode/` from what's pushed to
