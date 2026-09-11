@@ -9,6 +9,29 @@ once it reaches a stable release cadence.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-09-11
+
+_Author: Devaansh Goenka._
+
+### Added
+
+- A manually-triggered workflow (`promote-to-stable.yml`) that promotes a
+  tagged release from this (beta) repo into
+  `luciditycloud/terraform-provider-lucidity`'s `main`, rewriting the Go
+  module path and provider Registry address to the `luciditycloud`
+  namespace along the way, and pushes a matching tag so that repo's own
+  release pipeline cuts a signed stable release.
+- `release.yml` now regenerates and verifies the Registry docs before
+  signing, catching stale docs at the moment a version is actually cut
+  (previously only checked in CI on pull requests).
+
+### Changed
+
+- Rotated the release-signing GPG key; new signatures use the new key from
+  this release onward.
+- Clarified in `README.md` that `Devaansh/lucidity` is the beta Registry
+  namespace and `luciditycloud/lucidity` is the official-stable one.
+
 ## [0.1.2] - 2026-09-11
 
 _Author: Devaansh Goenka._ Everything below has landed on `main` since
