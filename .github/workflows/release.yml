@@ -20,6 +20,17 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Install tfplugindocs
+        run: go install github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs@latest
+
+      - name: Regenerate docs and fail if stale
+        run: |
+          tfplugindocs generate --provider-name lucidity
+          if ! git diff --exit-code -- docs/; then
+            echo "::error::docs/ is out of date with the provider schema and/or examples/ at this tag. Run 'tfplugindocs generate --provider-name lucidity' locally, commit the result, and re-tag."
+            exit 1
+          fi
+
       - name: Import the release-signing GPG key
         uses: crazy-max/ghaction-import-gpg@v6
         id: import_gpg

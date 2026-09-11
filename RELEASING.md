@@ -94,3 +94,49 @@ To sanity-check the GoReleaser config without publishing anything:
 ```bash
 goreleaser release --snapshot --clean --skip=sign,publish
 ```
+
+## Promoting to the official stable repo
+
+`luciditycloud/lucidity` is the official-stable Registry namespace,
+published from a separate repo,
+[github.com/luciditycloud/terraform-provider-lucidity](https://github.com/luciditycloud/terraform-provider-lucidity).
+This repo (`Devaansh/lucidity`) stays the beta channel and the only place
+development happens; promoting a release to stable is a deliberate, manual
+step from here, never automatic.
+
+### One-time setup (per new stable repo, not per release)
+
+1. **Push access:** create a fine-grained GitHub PAT scoped to just
+   `luciditycloud/terraform-provider-lucidity` with **Contents: Read and
+   write**, then add it as a secret named `LUCIDITYCLOUD_PUSH_TOKEN` in
+   *this* repo's Settings → Secrets and variables → Actions (the promotion
+   workflow runs from here, not from the stable repo).
+2. **The stable repo's own release signing:** repeat steps 1-3 of this
+   doc's "One-time setup" above, but for `luciditycloud/terraform-provider-lucidity`
+   specifically — a dedicated GPG key (reusing this repo's key is fine, or
+   generate a new one), its public half registered against the
+   `luciditycloud` Registry account, and `GPG_PRIVATE_KEY`/`PASSPHRASE`
+   added as secrets in the **stable repo**, not here. Without this, the tag
+   push in the promotion below will still land but the stable repo's own
+   `release.yml` run will fail at the signing step.
+3. First promotion only: once a release has landed there, point the
+   Terraform Registry at the stable repo (same "Publish" flow as step 2 of
+   the main one-time setup) so it starts indexing.
+
+### Promoting a release
+
+1. Cut a normal release here first (see "Cutting a release" above) — `main`
+   must be exactly at a version tag before promoting.
+2. Actions tab → **Promote to luciditycloud stable** → Run workflow.
+3. This (`.github/workflows/promote-to-stable.yml`) rewrites the Go module
+   path and provider address from `Devaansh/lucidity` to
+   `luciditycloud/lucidity` throughout the tree, drops `CLAUDE.md` and this
+   file (`RELEASING.md`) since neither belongs in the stable repo, verifies
+   the rewrite still builds and tests clean, regenerates the Registry docs,
+   and force-pushes the result to the stable repo's `main` plus the same
+   version tag — which fires that repo's own `ci.yml`/`release.yml` exactly
+   as a normal push would (pushing with a PAT isn't subject to the
+   `GITHUB_TOKEN` loop-prevention rule that blocks a workflow from
+   triggering further workflows in the *same* repo).
+4. Confirm the tag's `release.yml` run succeeds on the stable repo and the
+   release appears there and (once indexed) on the Registry.

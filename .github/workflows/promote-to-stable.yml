@@ -1,0 +1,94 @@
+name: Promote to luciditycloud stable
+
+# Manually triggered only. Promotes the current tip of `main` (which must
+# be exactly at a release tag) into github.com/luciditycloud/terraform-provider-lucidity's
+# `main`, rewriting the Go module path and provider Registry address from
+# Devaansh/lucidity to luciditycloud/lucidity along the way, and pushes a
+# matching tag so luciditycloud's own release.yml cuts a signed release
+# there. See RELEASING.md's "Promoting to the official stable repo"
+# section for the one-time prerequisites (LUCIDITYCLOUD_PUSH_TOKEN secret,
+# luciditycloud's own GPG release-signing setup).
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  OLD_MODULE: github.com/Devaansh/terraform-provider-lucidity
+  NEW_MODULE: github.com/luciditycloud/terraform-provider-lucidity
+  OLD_NS: Devaansh/lucidity
+  NEW_NS: luciditycloud/lucidity
+  STABLE_REPO_URL: https://github.com/luciditycloud/terraform-provider-lucidity.git
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version being promoted
+        id: version
+        run: |
+          if ! TAG=$(git describe --tags --exact-match HEAD 2>/dev/null); then
+            echo "::error::main's HEAD is not exactly at a tag. Cut a Devaansh release first (git tag vX.Y.Z && git push origin vX.Y.Z), then re-run this workflow."
+            exit 1
+          fi
+          echo "Promoting $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Remove files excluded from the stable repo
+        run: rm -f CLAUDE.md RELEASING.md
+
+      - name: Rewrite Devaansh namespace to luciditycloud
+        run: |
+          grep -rlIZ --exclude-dir=.git -e "$OLD_MODULE" -e "$OLD_NS" . \
+            | xargs -0 sed -i "s#$OLD_MODULE#$NEW_MODULE#g; s#$OLD_NS#$NEW_NS#g"
+
+      - name: Strip beta-only sections from README
+        # Content between these markers (e.g. the "which namespace should I
+        # use" explanation) only makes sense in the beta repo — a reader
+        # already on the stable repo doesn't need to be told about the beta
+        # alternative. A plain namespace-string substitution can't fix
+        # prose that names both namespaces side by side, so this is a
+        # separate, explicit removal step.
+        run: sed -i '/<!-- promote-to-stable:remove:start -->/,/<!-- promote-to-stable:remove:end -->/d' README.md
+
+      - name: Verify the rewrite builds cleanly
+        run: |
+          go build ./...
+          go vet ./...
+          go test ./...
+
+      - name: Regenerate Registry docs for the rewritten namespace
+        run: |
+          go install github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs@latest
+          tfplugindocs generate --provider-name lucidity
+
+      - name: Commit promotion snapshot
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Promote ${{ steps.version.outputs.tag }} from Devaansh/terraform-provider-lucidity"
+
+      - name: Push to luciditycloud main
+        run: |
+          git push "https://x-access-token:${LUCIDITYCLOUD_PUSH_TOKEN}@${STABLE_REPO_URL#https://}" HEAD:main --force
+        env:
+          LUCIDITYCLOUD_PUSH_TOKEN: ${{ secrets.LUCIDITYCLOUD_PUSH_TOKEN }}
+
+      - name: Tag and push the matching version to luciditycloud
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          git tag -a "$TAG" -m "$TAG"
+          git push "https://x-access-token:${LUCIDITYCLOUD_PUSH_TOKEN}@${STABLE_REPO_URL#https://}" "$TAG" --force
+        env:
+          LUCIDITYCLOUD_PUSH_TOKEN: ${{ secrets.LUCIDITYCLOUD_PUSH_TOKEN }}
