@@ -348,11 +348,11 @@ Full test evidence: [docs/qa-testing/account-management.md](docs/qa-testing/acco
 Full schema reference: [docs/resources/tenant.md](docs/resources/tenant.md), [docs/data-sources/tenants.md](docs/data-sources/tenants.md).
 
 
-## Pending improvements
+## Future planned improvements
 
-Gaps found during live QA testing that need changes on Lucidity's own API
-before this provider can fully close them. Tracked as JIRA tickets; this
-provider's behavior will be updated once each ships.
+No blockers however gaps found during live QA testing that need changes on Lucidity's own API
+end before this provider can fully close them. Tracked as Lucidity internal JIRA tickets; this
+provider's behavior will be updated once each ships. Should be backwards compatible
 
 | Ticket | Improvement |
 |---|---|
