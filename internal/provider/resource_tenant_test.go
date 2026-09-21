@@ -258,6 +258,38 @@ func TestTenantResourceRPC_ValidateConfig_AcceptsUUIDExternalID(t *testing.T) {
 	}
 }
 
+func TestTenantResourceRPC_ValidateConfig_RejectsMalformedAWSAccountID(t *testing.T) {
+	srv := newTestProviderServer(t)
+	resp, err := srv.ValidateResourceConfig(context.Background(), &tfprotov6.ValidateResourceConfigRequest{
+		TypeName: tenantResourceTypeName,
+		Config: tenantConfigValue(t, nil, map[string]tftypes.Value{
+			"cloud_provider_account_id": strVal("not-an-account-id"),
+		}),
+	})
+	if err != nil {
+		t.Fatalf("ValidateResourceConfig: %v", err)
+	}
+	if !hasErrorDiagnostic(resp.Diagnostics) {
+		t.Fatalf("expected an error diagnostic for a malformed AWS cloud_provider_account_id, got: %+v", resp.Diagnostics)
+	}
+}
+
+func TestTenantResourceRPC_ValidateConfig_AcceptsWellFormedAWSAccountID(t *testing.T) {
+	srv := newTestProviderServer(t)
+	resp, err := srv.ValidateResourceConfig(context.Background(), &tfprotov6.ValidateResourceConfigRequest{
+		TypeName: tenantResourceTypeName,
+		Config: tenantConfigValue(t, nil, map[string]tftypes.Value{
+			"cloud_provider_account_id": strVal("123456789012"),
+		}),
+	})
+	if err != nil {
+		t.Fatalf("ValidateResourceConfig: %v", err)
+	}
+	if hasErrorDiagnostic(resp.Diagnostics) {
+		t.Fatalf("expected no error diagnostic for a well-formed AWS cloud_provider_account_id, got: %+v", resp.Diagnostics)
+	}
+}
+
 func TestTenantResourceRPC_ValidateConfig_RejectsBlankDisplayName(t *testing.T) {
 	srv := newTestProviderServer(t)
 	resp, err := srv.ValidateResourceConfig(context.Background(), &tfprotov6.ValidateResourceConfigRequest{

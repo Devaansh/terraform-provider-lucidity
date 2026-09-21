@@ -22,6 +22,12 @@ once it reaches a stable release cadence.
   provider-auth fields, read-your-writes consistency, account-identity in
   auth responses, distinct onboarding error codes, update-time IAM
   validation).
+- Client-side AWS account ID format validation: `cloud_provider_account_id`
+  now requires exactly 12 digits when `cloud_provider = "AWS"`, checked in
+  `ValidateConfig`. Lucidity's own API applies no format check here
+  either, so a malformed value was previously only caught much later as
+  the same ambiguous cloud-account-validation failure as a
+  wrong-but-well-formed account number.
 
 ### Changed
 

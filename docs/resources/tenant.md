@@ -66,7 +66,7 @@ resource "lucidity_tenant" "example" {
 Required:
 
 - `cloud_provider` (String) AWS, AZURE, or GCP. Onboarding a brand-new resource is AWS-only for now (Azure/GCP onboarding isn't complete on Lucidity's side yet and returns 400 INVALID_REQUEST — pending a future Lucidity release) — an AZURE/GCP resource can only enter Terraform via `terraform import` of a tenant that already exists on Lucidity.
-- `cloud_provider_account_id` (String) The cloud's own identifier for the account: the AWS account ID, the Azure subscription ID (or subscription name), or the GCP project ID. Not a display name.
+- `cloud_provider_account_id` (String) The cloud's own identifier for the account: the AWS account ID, the Azure subscription ID (or subscription name), or the GCP project ID. Not a display name. For AWS specifically, must be exactly 12 digits — validated client-side, since Lucidity's own API applies no format check here either.
 
 Optional:
 

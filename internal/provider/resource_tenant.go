@@ -41,6 +41,15 @@ var (
 // any API call, is strictly better than that ambiguous downstream failure.
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
+// awsAccountIDPattern validates cloud_provider_account_id when
+// cloud_provider is AWS — checked in ValidateConfig, not as a schema
+// Validator, since the field is shared with AZURE/GCP (subscription ID/
+// name, project ID) which don't share this exact-12-digits shape. Lucidity
+// applies no format check on this field server-side either, so a malformed
+// value was previously only caught much later as the same ambiguous
+// cloud-account-validation failure as a wrong-but-well-formed account.
+var awsAccountIDPattern = regexp.MustCompile(`^\d{12}$`)
+
 func newTenantResource() resource.Resource {
 	return &tenantResource{}
 }
@@ -116,8 +125,9 @@ func (r *tenantResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 						},
 					},
 					"cloud_provider_account_id": schema.StringAttribute{
-						Required:    true,
-						Description: "The cloud's own identifier for the account: the AWS account ID, the Azure subscription ID (or subscription name), or the GCP project ID. Not a display name.",
+						Required: true,
+						Description: "The cloud's own identifier for the account: the AWS account ID, the Azure subscription ID (or subscription name), or the GCP project ID. Not a display name. " +
+							"For AWS specifically, must be exactly 12 digits — validated client-side, since Lucidity's own API applies no format check here either.",
 						PlanModifiers: []planmodifier.String{
 							stringplanmodifier.RequiresReplace(),
 						},
@@ -273,6 +283,20 @@ func (r *tenantResource) ValidateConfig(ctx context.Context, req resource.Valida
 			fmt.Sprintf(
 				"cloud_provider is \"AWS\", which requires: %s. These are only required for AWS — onboarding is AWS-only, so an AZURE or GCP resource (which can only enter Terraform via terraform import) doesn't need them.",
 				strings.Join(missing, ", "),
+			),
+		)
+	}
+
+	// Lucidity's own API applies no format check on this field — a
+	// malformed value is otherwise only caught much later, ambiguously, as
+	// the same ID-not-found/cloud-account-validation failure as a
+	// wrong-but-well-formed account number.
+	if accountID := cfg.CloudEntityInformation.CloudProviderAccountID; !accountID.IsUnknown() && !awsAccountIDPattern.MatchString(accountID.ValueString()) {
+		resp.Diagnostics.AddError(
+			"Invalid AWS account ID format",
+			fmt.Sprintf(
+				"cloud_entity_information.cloud_provider_account_id must be exactly 12 digits for cloud_provider = \"AWS\" (e.g. \"123456789012\"), got: %q.",
+				accountID.ValueString(),
 			),
 		)
 	}
