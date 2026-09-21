@@ -350,9 +350,9 @@ Full schema reference: [docs/resources/tenant.md](docs/resources/tenant.md), [do
 
 ## Future planned improvements
 
-No blockers however gaps found during live QA testing that need changes on Lucidity's own API
-end before this provider can fully close them. Tracked as Lucidity internal JIRA tickets; this
-provider's behavior will be updated once each ships. Should be backwards compatible
+No blockers, however gaps found during live QA testing that need changes on Lucidity's own API
+before this provider can fully close them. Tracked as Lucidity internal JIRA tickets; this
+provider's behavior will be updated once each ships. Should be backwards compatible.
 
 | Ticket | Improvement |
 |---|---|
