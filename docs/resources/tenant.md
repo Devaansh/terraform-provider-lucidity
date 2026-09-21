@@ -43,7 +43,7 @@ resource "lucidity_tenant" "example" {
 
 ### Required
 
-- `lucidity_dashboard_display_name` (String) The name this tenant shows under in your Lucidity dashboard. Updatable in-place at any time.
+- `lucidity_dashboard_display_name` (String) The name this tenant shows under in your Lucidity dashboard. Updatable in-place at any time. Must not be blank — rejected client-side rather than relying on Lucidity's own handling, since Update's request omits an explicitly-blank value entirely (a Go json omitempty quirk on our end), which previously surfaced as a confusing generic "Nothing to update" error instead of a clear one.
 
 ### Optional
 

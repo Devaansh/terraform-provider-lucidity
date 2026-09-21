@@ -9,6 +9,30 @@ once it reaches a stable release cadence.
 
 ## [Unreleased]
 
+### Added
+
+- `lucidity_dashboard_display_name` now rejects a blank value client-side
+  at plan time, instead of only surfacing a confusing generic "Nothing to
+  update" error from Lucidity's API (Update silently omits an
+  explicitly-blank value from its request body).
+- A "Pending improvements" section in `README.md` tracking JIRA tickets
+  filed against gaps in Lucidity's own API found during live QA testing
+  (external ID rotation/verification, `aws_org_root_id` and
+  `lucidity_product_list` update/read support, List API returning
+  provider-auth fields, read-your-writes consistency, account-identity in
+  auth responses, distinct onboarding error codes, update-time IAM
+  validation).
+
+### Changed
+
+- Clarified the `skip_cloud_permission_check` documentation in `README.md`
+  to match the schema description: it skips the permission check only,
+  never Lucidity's baseline cloud-account-reachability validation.
+- The "attempting to modify an INACTIVE tenant" error now tells the user
+  to leave the Terraform change pending and contact
+  support@lucidity.cloud, rather than only stating that reactivation
+  isn't possible via API.
+
 ## [0.1.6] - 2026-09-12
 
 _Author: Devaansh Goenka._

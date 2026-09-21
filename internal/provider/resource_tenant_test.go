@@ -258,6 +258,22 @@ func TestTenantResourceRPC_ValidateConfig_AcceptsUUIDExternalID(t *testing.T) {
 	}
 }
 
+func TestTenantResourceRPC_ValidateConfig_RejectsBlankDisplayName(t *testing.T) {
+	srv := newTestProviderServer(t)
+	resp, err := srv.ValidateResourceConfig(context.Background(), &tfprotov6.ValidateResourceConfigRequest{
+		TypeName: tenantResourceTypeName,
+		Config: tenantConfigValue(t, map[string]tftypes.Value{
+			"lucidity_dashboard_display_name": strVal(""),
+		}, nil),
+	})
+	if err != nil {
+		t.Fatalf("ValidateResourceConfig: %v", err)
+	}
+	if !hasErrorDiagnostic(resp.Diagnostics) {
+		t.Fatalf("expected an error diagnostic for a blank lucidity_dashboard_display_name, got: %+v", resp.Diagnostics)
+	}
+}
+
 func TestTenantResourceRPC_ValidateConfig_RejectsInvalidDestroyBehavior(t *testing.T) {
 	srv := newTestProviderServer(t)
 	resp, err := srv.ValidateResourceConfig(context.Background(), &tfprotov6.ValidateResourceConfigRequest{

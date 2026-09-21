@@ -336,14 +336,35 @@ output "active_tenant_ids" {
 - Onboard/update/deboard can take a while to show up in `lucidity_tenants` —
   a `terraform apply` will retry for up to 150s before erroring; a genuine
   success sometimes still needs a manual re-`apply` past that window.
-- `skip_cloud_permission_check = true` skips the IAM-permission check only —
-  Lucidity still requires a genuinely assumable role to onboard.
+- `skip_cloud_permission_check = true` skips the IAM-*permission* check
+  only — it does **not** skip Lucidity's baseline cloud-account-reachability
+  validation, which still runs regardless of this flag. An unreachable or
+  invalid cloud account fails onboarding either way.
 - Updating `aws_iam_role_name`/`aws_iam_policy_name` doesn't re-validate that
   the role/policy actually exists — a typo won't surface until something
   needs it.
 
 Full test evidence: [docs/qa-testing/account-management.md](docs/qa-testing/account-management.md).
 Full schema reference: [docs/resources/tenant.md](docs/resources/tenant.md), [docs/data-sources/tenants.md](docs/data-sources/tenants.md).
+
+
+## Pending improvements
+
+Gaps found during live QA testing that need changes on Lucidity's own API
+before this provider can fully close them. Tracked as JIRA tickets; this
+provider's behavior will be updated once each ships.
+
+| Ticket | Improvement |
+|---|---|
+| CSEN-3811 | Allow rotating an existing tenant's AWS IAM external ID without deboarding and re-onboarding. |
+| CSEN-3813 | Provide a secure way to verify the configured AWS IAM external ID without exposing the raw value. |
+| CSEN-3814 | Support updating and reading `aws_org_root_id` after onboarding. |
+| CSEN-3815 | Support updating and reading `lucidity_product_list` throughout the tenant lifecycle. |
+| CSEN-3816 | Return non-sensitive AWS, Azure, and eventually GCP authentication fields from the Tenant List API. |
+| CSEN-3817 | Ensure tenant changes are visible through the List API before mutation APIs report success. |
+| CSEN-3818 | Include the associated Dashboard account identity in API authentication responses. |
+| CSEN-3819 | Return distinct error codes for different cloud-account onboarding validation failures. |
+| CSEN-3821 | Apply onboarding-style IAM role and policy validation to tenant updates. |
 
 
 ## Recommended local development setup

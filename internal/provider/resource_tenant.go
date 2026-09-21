@@ -155,8 +155,12 @@ func (r *tenantResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 		},
 		Attributes: map[string]schema.Attribute{
 			"lucidity_dashboard_display_name": schema.StringAttribute{
-				Required:    true,
-				Description: "The name this tenant shows under in your Lucidity dashboard. Updatable in-place at any time.",
+				Required: true,
+				Description: "The name this tenant shows under in your Lucidity dashboard. Updatable in-place at any time. Must not be blank — " +
+					"rejected client-side rather than relying on Lucidity's own handling, since Update's request omits an explicitly-blank value entirely (a Go json omitempty quirk on our end), which previously surfaced as a confusing generic \"Nothing to update\" error instead of a clear one.",
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 			},
 			"aws_org_root_id": schema.StringAttribute{
 				Optional: true,
@@ -449,8 +453,9 @@ func (r *tenantResource) Read(ctx context.Context, req resource.ReadRequest, res
 		resp.Diagnostics.AddError(
 			fmt.Sprintf("Lucidity tenant is %s", found.Status),
 			fmt.Sprintf(
-				"Cloud account %s (tenantId=%s) is %s on Lucidity and cannot be reactivated via API — only Lucidity support can restore it. "+
-					"The resource is kept in Terraform state with its current status; run `terraform state rm` on it once you've decided how to proceed (contact Lucidity support, or stop tracking it).",
+				"Further changes to cloud account %s (tenantId=%s) require it to be linked and ACTIVE on Lucidity, but it is currently %s. "+
+					"No self-service reactivation is available — only Lucidity support can restore it. Please leave this Terraform change pending and reach out to support@lucidity.cloud to request reactivation; once that's done, you can apply normally again. "+
+					"The resource is kept in Terraform state with its current status in the meantime; run `terraform state rm` on it instead if you'd rather stop tracking it than wait.",
 				accountID, found.TenantID, found.Status,
 			),
 		)
