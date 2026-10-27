@@ -337,8 +337,7 @@ func TestDecodeEnvelope_BareAndWrapped(t *testing.T) {
 }
 
 // Every API call carries the access token as a Bearer token, plus the
-// legacy X-Authtype header until the legacy endpoints are confirmed to
-// accept the new token without it.
+// legacy X-Authtype header until it's confirmed unnecessary.
 func TestClient_SendsBearerAndLegacyAuthType(t *testing.T) {
 	var refreshCalls int32
 	var gotAuth, gotType string

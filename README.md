@@ -101,12 +101,15 @@ and never writes the credentials or tokens to state or logs.
 4. Click on "Create Key" to generate a refresh token (format `<accessKey>.<secretKey>`)
 5. Supply the refresh token to this provider
 
+The refresh token's expiry is set and managed in the dashboard.
+
 **Getting service account credentials**
 
-A service account credential is created with Lucidity's
-`POST /v1/service-accounts/{id}/tokens`, which returns a `clientId` and a
-`clientSecret`. **The secret is shown only once**, at creation: store it in
-your secret manager straight away.
+Service accounts, their roles and their credentials are created and managed
+in the Lucidity dashboard (not through this provider). Creating a credential
+gives you a `clientId` and a `clientSecret`. **The secret is shown only
+once**, at creation: store it in your secret manager straight away. The
+credential's expiry is also set and managed in the dashboard.
 
 ```hcl
 provider "lucidity" {
@@ -142,10 +145,11 @@ and this provider, and what is still unconfirmed:
 
 | Topic | API docs | This provider | Impact |
 |---|---|---|---|
-| Token endpoint | `POST /v1/oauth2/token` for users and service accounts. The doc lists `/public/v1/auth/tokens` and `/external/client/api/v1/auth/token` as replaced. | Uses `/v1/oauth2/token`. The legacy `/external/api/v1/auth/user-token/refresh` (what earlier provider versions used) isn't in the doc's replaced list. | None expected; existing refresh tokens keep working. |
-| Header on API calls | `Authorization: Bearer <token>` | Sends `Authorization: Bearer <token>` **and** the legacy `X-Authtype: lucidity_access_token` | The tenant endpoints are still legacy. Until it's confirmed they accept the new token without `X-Authtype`, the extra header is kept. If they reject the new token entirely, `lucidity_tenant` breaks until the tenant module moves to the revamped API. |
-| API host | The examples use `https://dash-back.lucidity.dev` (the dev host) | Keeps the dashboard URL → API host table unchanged for all five deployments | Unconfirmed that every deployment serves `/v1/oauth2/token` on the same host. |
-| Service accounts | Supported: `clientId` + `clientSecret`; the secret is shown once | Supported (`client_id`, `client_secret*`, `LUCIDITY_CLIENT_*`) | Automation no longer has to run as one named Admin. |
+| Token endpoint | `POST /v1/oauth2/token` for users and service accounts. The doc lists `/public/v1/auth/tokens` and `/external/client/api/v1/auth/token` as replaced. | Uses `/v1/oauth2/token` | Existing refresh tokens keep working. The legacy `/external/api/v1/auth/user-token/refresh` (used by provider v0.1.x) is still live but will be deprecated: upgrade before it is. |
+| Header on API calls | `Authorization: Bearer <token>` | Sends `Authorization: Bearer <token>` **and** the legacy `X-Authtype: lucidity_access_token` | The legacy tenant endpoints accept the new token (confirmed by Lucidity engineering). The extra header is harmless and will be dropped once confirmed unnecessary. |
+| API host | The examples use `https://dash-back.lucidity.dev` (the dev host) | Keeps the dashboard URL → API host table unchanged for all five deployments | Every deployment is expected to serve `/v1/oauth2/token` on the same host, but only dev has been seen in the docs. |
+| Service accounts | Supported: `clientId` + `clientSecret`; the secret is shown once | Supported (`client_id`, `client_secret*`, `LUCIDITY_CLIENT_*`) | Automation no longer has to run as one named Admin. Service accounts and their roles are managed in the dashboard. |
+| Credential expiry | Not covered by the doc | — | Refresh tokens, client IDs and client secrets all expire; expiry is managed in the dashboard. Access tokens always last 15 minutes (compliance). |
 | Renewal | No refresh token for service accounts: call the endpoint again with the same body | Re-sends the same credentials before the 15-minute expiry | None. |
 | Response and errors | Wrapped in `{success, data / error, requestId}`; branch on `error.code` (`VALIDATION_ERROR`, `INVALID_REQUEST`, `UNAUTHORIZED`, `INTERNAL_ERROR`) | Reads the wrapped token; a 401 names which credential type was rejected; other errors keep their code and `requestId` | Quote the `requestId` to Lucidity support. |
 | Refresh token format | `<accessKey>.<secretKey>`; a token without the `.` gets `400 INVALID_REQUEST` | No client-side check | Existing tokens already use this format. |

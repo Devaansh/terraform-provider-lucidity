@@ -15,9 +15,9 @@ import (
 
 const (
 	// X-Authtype is the legacy API's auth header. The revamped API only
-	// documents "Authorization: Bearer"; X-Authtype is still sent because
-	// the tenant endpoints are legacy and it isn't yet confirmed they accept
-	// the new token without it. Remove once confirmed.
+	// documents "Authorization: Bearer", and Lucidity engineering confirmed
+	// the legacy tenant endpoints accept the new token; X-Authtype is still
+	// sent until it's confirmed unnecessary, then it can go.
 	headerAuthType = "X-Authtype"
 	authTypeValue  = "lucidity_access_token"
 

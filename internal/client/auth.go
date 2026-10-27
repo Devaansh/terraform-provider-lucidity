@@ -31,7 +31,7 @@ const DefaultProactiveRefreshAge = AccessTokenTTL - 3*time.Minute
 // AuthFailedMessage is the diagnostic text for a 401 when the provider
 // authenticates with a user's refresh token.
 const AuthFailedMessage = "authentication failed (401). Lucidity rejected the refresh token — " +
-	"it may be wrong, expired (default lifetime 30 days) or revoked. " +
+	"it may be wrong, expired or revoked (expiry is set in the Lucidity dashboard). " +
 	"Generate a new one in the Lucidity dashboard."
 
 // ServiceAccountAuthFailedMessage is the diagnostic text for a 401 when the
@@ -39,7 +39,7 @@ const AuthFailedMessage = "authentication failed (401). Lucidity rejected the re
 // causes are the ones the token endpoint documents for 401 UNAUTHORIZED.
 const ServiceAccountAuthFailedMessage = "authentication failed (401). Lucidity rejected the service account credentials — " +
 	"the client ID or secret may be wrong, the credential may be revoked or expired, " +
-	"or the service account may be disabled or deleted. Check the service account in Lucidity, or create a new credential for it."
+	"or the service account may be disabled or deleted. Check the service account in the Lucidity dashboard, or create a new credential for it there."
 
 // AuthError is returned whenever the credentials are rejected, whether by
 // the token endpoint directly or after a forced refresh+retry on a 401 from

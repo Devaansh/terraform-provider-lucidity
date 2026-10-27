@@ -27,9 +27,8 @@ _Author: Swapnesh Kumar._
   `{"accessToken": ...}` is still accepted). Existing refresh tokens keep
   working.
 - API calls now send `Authorization: Bearer <token>` (was the raw token).
-  `X-Authtype: lucidity_access_token` is still sent alongside, until it is
-  confirmed that the legacy tenant endpoints accept the new token without
-  it.
+  `X-Authtype: lucidity_access_token` is still sent alongside for now; the
+  legacy tenant endpoints accept the new token.
 - A 401 now says which credential type was rejected (refresh token or
   service account), with the causes the token endpoint documents.
 - Responses without the `{success,data,error,requestId}` envelope are now
