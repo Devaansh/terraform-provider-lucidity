@@ -185,11 +185,14 @@ func (p *LucidityProvider) Configure(ctx context.Context, req provider.Configure
 func (p *LucidityProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		newTenantResource,
+		newScalingPolicyResource,
+		newScalingPolicyAttachmentResource,
 	}
 }
 
 func (p *LucidityProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		newTenantsDataSource,
+		newScalingPoliciesDataSource,
 	}
 }

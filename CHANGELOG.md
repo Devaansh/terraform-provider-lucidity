@@ -11,6 +11,17 @@ once it reaches a stable release cadence.
 
 _Author: Swapnesh Kumar._
 
+### Added
+
+- `lucidity_scaling_policy` resource (create, read, update, delete, import)
+  on the revamped `/autoscaler/v1/scaling-policies` API; drift is detected
+  on every setting.
+- `lucidity_scaling_policy_attachment` resource: attaches a policy to one
+  instance (AWS, Azure, GCP); destroy detaches. Lucidity's API can't list a
+  policy's instances, so attachments made or removed outside Terraform
+  aren't detected.
+- `lucidity_scaling_policies` data source.
+
 ### Changed
 
 - Responses without the `{success,data,error,requestId}` envelope are now
