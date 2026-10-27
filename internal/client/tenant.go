@@ -5,16 +5,74 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 )
 
-// Tenant API endpoints. All rooted at /external/client/api/v1/tenants per
-// the Public Tenant API doc; the dashboard account is always resolved from
-// the caller's access token, never sent explicitly.
+// Tenant API endpoints. The dashboard account is always resolved from the
+// caller's access token, never sent explicitly.
+//
+// Revamped API (Tenant Linking API doc): list is GET /v1/tenants for every
+// cloud; onboard, update and deboard put the cloud in the path, and only
+// aws exists so far.
+//
+// Azure and GCP still go through the legacy /external/client/api/v1/tenants
+// endpoints (deprecated, still working) until /v1/tenants/azure and
+// /v1/tenants/gcp exist.
 const (
-	tenantsPath        = "/external/client/api/v1/tenants"
-	tenantsOnboardPath = "/external/client/api/v1/tenants/onboard"
-	tenantsDeboardPath = "/external/client/api/v1/tenants/deboard"
+	tenantsPath           = "/v1/tenants"
+	tenantsAWSOnboardPath = "/v1/tenants/aws/onboard"
+	tenantsAWSUpdatePath  = "/v1/tenants/aws"
+	tenantsAWSDeboardPath = "/v1/tenants/aws/deboard"
+
+	legacyTenantsPath        = "/external/client/api/v1/tenants"
+	legacyTenantsOnboardPath = "/external/client/api/v1/tenants/onboard"
+	legacyTenantsDeboardPath = "/external/client/api/v1/tenants/deboard"
 )
+
+const cloudProviderAWS = "AWS"
+
+// awsCloudEntityInformation is cloudEntityInformation for the revamped
+// /v1/tenants/aws endpoints: no cloudProvider (it's in the path) and no
+// Azure fields. Optional fields are omitempty so an update only sends what
+// changes.
+type awsCloudEntityInformation struct {
+	CloudProviderAccountID string `json:"cloudProviderAccountId"`
+	ExternalID             string `json:"externalId,omitempty"`
+	AWSIAMRoleName         string `json:"awsIAMRoleName,omitempty"`
+	AWSIAMPolicyName       string `json:"awsIAMPolicyName,omitempty"`
+	// AWSRootID isn't in the revamped doc either; the API ignores unknown
+	// fields, so it's still sent when set (see CloudEntityInformation).
+	AWSRootID string `json:"awsRootId,omitempty"`
+}
+
+func toAWSCloudEntityInformation(c CloudEntityInformation) awsCloudEntityInformation {
+	return awsCloudEntityInformation{
+		CloudProviderAccountID: c.CloudProviderAccountID,
+		ExternalID:             c.ExternalID,
+		AWSIAMRoleName:         c.AWSIAMRoleName,
+		AWSIAMPolicyName:       c.AWSIAMPolicyName,
+		AWSRootID:              c.AWSRootID,
+	}
+}
+
+type awsOnboardRequest struct {
+	CloudEntityInformation   awsCloudEntityInformation `json:"cloudEntityInformation"`
+	DisplayName              string                    `json:"displayName"`
+	SkipCloudPermissionCheck bool                      `json:"skipCloudPermissionCheck,omitempty"`
+	ProductList              []string                  `json:"productList"`
+}
+
+type awsUpdateRequest struct {
+	CloudEntityInformation awsCloudEntityInformation `json:"cloudEntityInformation"`
+	DisplayName            string                    `json:"displayName,omitempty"`
+}
+
+// awsDeboardRequest sends the account ID at the top level: the revamped
+// deboard ignores a cloudEntityInformation wrapper and answers
+// VALIDATION_ERROR.
+type awsDeboardRequest struct {
+	CloudProviderAccountID string `json:"cloudProviderAccountId"`
+}
 
 // Tenant status values, per the List/Update response "status" field.
 const (
@@ -73,14 +131,24 @@ type OnboardedTenant struct {
 }
 
 // OnboardTenant connects a cloud account to Lucidity as a managed tenant.
-// AWS-only today: a non-AWS cloudProvider returns 400 INVALID_REQUEST.
+// AWS goes to POST /v1/tenants/aws/onboard. Other clouds go to the legacy
+// endpoint, which today answers 400 INVALID_REQUEST for them anyway.
 func (c *Client) OnboardTenant(ctx context.Context, req OnboardTenantRequest) (*OnboardedTenant, error) {
+	path, body := legacyTenantsOnboardPath, any(req)
+	if req.CloudEntityInformation.CloudProvider == cloudProviderAWS {
+		path, body = tenantsAWSOnboardPath, awsOnboardRequest{
+			CloudEntityInformation:   toAWSCloudEntityInformation(req.CloudEntityInformation),
+			DisplayName:              req.DisplayName,
+			SkipCloudPermissionCheck: req.SkipCloudPermissionCheck,
+			ProductList:              req.ProductList,
+		}
+	}
 	var out OnboardedTenant
 	// DoNoRetry5xx, not Do: a 5xx on the onboard POST doesn't prove the
 	// tenant wasn't created, and blindly re-sending it turns a
 	// successful-but-5xx create into a masking 409. The caller re-lists to
 	// find out what actually happened instead (see IsOutcomeUnknown).
-	if err := c.DoNoRetry5xx(ctx, http.MethodPost, tenantsOnboardPath, req, &out); err != nil {
+	if err := c.DoNoRetry5xx(ctx, http.MethodPost, path, body, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -169,6 +237,18 @@ func (e *TruncatedListError) Error() string {
 	)
 }
 
+// GetTenant reads one tenant by its Lucidity tenantId via
+// GET /v1/tenants/{tenantId}. The response has the same fields as a list
+// item. A 404 (APIError, HTTPStatus 404) means no such tenant under the
+// caller's account.
+func (c *Client) GetTenant(ctx context.Context, tenantID string) (*TenantListItem, error) {
+	var out TenantListItem
+	if err := c.Do(ctx, http.MethodGet, tenantsPath+"/"+url.PathEscape(tenantID), nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // FindTenant returns the list entry matching provider+accountID, and whether
 // one was found. Used by Read/Create for the list-and-match pattern the API
 // requires (there is no GET-by-ID).
@@ -203,10 +283,18 @@ type UpdatedTenant struct {
 	Status                 string `json:"status"`
 }
 
-// UpdateTenant applies a partial update to an existing, ACTIVE tenant.
+// UpdateTenant applies a partial update to an existing, ACTIVE tenant: AWS
+// via PATCH /v1/tenants/aws, other clouds via the legacy endpoint.
 func (c *Client) UpdateTenant(ctx context.Context, req UpdateTenantRequest) (*UpdatedTenant, error) {
+	path, body := legacyTenantsPath, any(req)
+	if req.CloudEntityInformation.CloudProvider == cloudProviderAWS {
+		path, body = tenantsAWSUpdatePath, awsUpdateRequest{
+			CloudEntityInformation: toAWSCloudEntityInformation(req.CloudEntityInformation),
+			DisplayName:            req.DisplayName,
+		}
+	}
 	var out UpdatedTenant
-	if err := c.Do(ctx, http.MethodPatch, tenantsPath, req, &out); err != nil {
+	if err := c.Do(ctx, http.MethodPatch, path, body, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -231,12 +319,15 @@ type DeboardResult struct {
 // rather than erroring. IRREVERSIBLE via API — an INACTIVE tenant can only
 // be reactivated by Lucidity support.
 func (c *Client) DeboardTenant(ctx context.Context, cloudProvider, cloudProviderAccountID string) (*DeboardResult, error) {
-	req := DeboardTenantRequest{CloudEntityInformation: CloudEntityInformation{
+	path, body := legacyTenantsDeboardPath, any(DeboardTenantRequest{CloudEntityInformation: CloudEntityInformation{
 		CloudProvider:          cloudProvider,
 		CloudProviderAccountID: cloudProviderAccountID,
-	}}
+	}})
+	if cloudProvider == cloudProviderAWS {
+		path, body = tenantsAWSDeboardPath, awsDeboardRequest{CloudProviderAccountID: cloudProviderAccountID}
+	}
 	var out DeboardResult
-	if err := c.Do(ctx, http.MethodPut, tenantsDeboardPath, req, &out); err != nil {
+	if err := c.Do(ctx, http.MethodPut, path, body, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
