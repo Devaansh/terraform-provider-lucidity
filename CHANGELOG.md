@@ -11,8 +11,27 @@ once it reaches a stable release cadence.
 
 _Author: Swapnesh Kumar._
 
+### Added
+
+- Service account authentication: `client_id` (or `LUCIDITY_CLIENT_ID`) plus
+  one of `client_secret`, `client_secret_file`, `client_secret_command` (or
+  `LUCIDITY_CLIENT_SECRET`). Use either a refresh token or service account
+  credentials, never both; mixing them fails at validate time, and both
+  types set only in the environment is an error.
+
 ### Changed
 
+- Authentication moved to the revamped token endpoint
+  `POST /v1/oauth2/token` (was `/external/api/v1/auth/user-token/refresh`).
+  The token response is read from the standard envelope (a bare
+  `{"accessToken": ...}` is still accepted). Existing refresh tokens keep
+  working.
+- API calls now send `Authorization: Bearer <token>` (was the raw token).
+  `X-Authtype: lucidity_access_token` is still sent alongside, until it is
+  confirmed that the legacy tenant endpoints accept the new token without
+  it.
+- A 401 now says which credential type was rejected (refresh token or
+  service account), with the causes the token endpoint documents.
 - Responses without the `{success,data,error,requestId}` envelope are now
   decoded directly, and flat `{code,message,details}` error bodies are
   parsed (code, message and details shown) instead of reported as

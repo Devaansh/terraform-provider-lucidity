@@ -969,7 +969,7 @@ func handleOnboardError(diags *diag.Diagnostics, err error, accountID string) {
 // say which one applies (and a plain bad-token 401 looks identical), so the
 // user gets the full list to work through instead of a guess.
 const unauthorizedChecklist = "Possible causes — please check each:\n" +
-	"  1. The refresh token is expired, revoked or belongs to a different Lucidity account (default lifetime 30 days; regenerate it in the dashboard). If other Lucidity calls in this run succeeded, this is unlikely.\n" +
+	"  1. The provider's credentials (refresh token or service account client credentials) are expired, revoked or belong to a different Lucidity account, or a service account's roles don't allow this call. If other Lucidity calls in this run succeeded, a bad credential is unlikely.\n" +
 	"  2. The IAM role named in aws_iam_role_name does not exist in the target account, or the name is misspelled (give the name only, not the ARN).\n" +
 	"  3. The role's trust policy does not allow Lucidity's principal to assume it.\n" +
 	"  4. The trust policy's sts:ExternalId condition does not match aws_iam_external_id. When rotating the external ID, update the trust policy FIRST, then apply the new value here.\n" +

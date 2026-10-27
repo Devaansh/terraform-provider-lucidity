@@ -80,31 +80,75 @@ tfplugindocs generate --provider-name lucidity
 
 ## Provider Authentication Management
 
+The provider authenticates against Lucidity's revamped token endpoint,
+`POST /v1/oauth2/token` ([docs/api/revamp/auth/auth.md](docs/api/revamp/auth/auth.md)),
+with **one** of two credential types:
+
+| Credential type | Who it is | What you give the provider |
+|---|---|---|
+| **User refresh token** | A person's dashboard login | `refresh_token` / `refresh_token_file` / `refresh_token_command`, or `LUCIDITY_REFRESH_TOKEN` |
+| **Service account** (recommended for automation) | A non-human identity whose roles decide what it can do | `client_id` (or `LUCIDITY_CLIENT_ID`) plus `client_secret` / `client_secret_file` / `client_secret_command` (or `LUCIDITY_CLIENT_SECRET`) |
+
+Either way, the provider exchanges the credentials for a 15-minute access
+token, renews it before it expires by sending the same credentials again,
+and never writes the credentials or tokens to state or logs.
+
+**Getting a user refresh token**
 
 1. Log into the Lucidity Dashboard
 2. Click on settings (Bottom left)
 3. Click on "API Key"
-4. Click on "Create Key" to generate a refresh token
+4. Click on "Create Key" to generate a refresh token (format `<accessKey>.<secretKey>`)
 5. Supply the refresh token to this provider
 
+**Getting service account credentials**
+
+A service account credential is created with Lucidity's
+`POST /v1/service-accounts/{id}/tokens`, which returns a `clientId` and a
+`clientSecret`. **The secret is shown only once**, at creation: store it in
+your secret manager straight away.
+
+```hcl
+provider "lucidity" {
+  lucidity_dashboard_url          = "https://app.lucidity.cloud"
+  lucidity_dashboard_account_name = "Acme Corp"
+  client_id                       = "svc-abc123"
+  client_secret_command           = "aws secretsmanager get-secret-value --secret-id lucidity/client-secret --query SecretString --output text"
+}
+```
+
+**Rules**
+
+- Use one credential type. Setting a refresh token source together with
+  `client_id` or a client secret source fails at `terraform validate`.
+- At most one source per secret: one of `refresh_token`,
+  `refresh_token_file`, `refresh_token_command`; or one of `client_secret`,
+  `client_secret_file`, `client_secret_command`.
+- The provider block decides the type when it sets any credential
+  attribute. The other type's environment variables are then ignored.
+- With no credential attributes, the environment decides:
+  `LUCIDITY_REFRESH_TOKEN`, or `LUCIDITY_CLIENT_ID` + `LUCIDITY_CLIENT_SECRET`.
+  Both types set in the environment is an error, not a guess.
+- `client_id` in the provider block with the secret in
+  `LUCIDITY_CLIENT_SECRET` (or the other way round) is fine.
+
+All the secret-store recipes below use `refresh_token_command` /
+`refresh_token`; they work the same way for `client_secret_command` /
+`client_secret`.
+
 **API documentation notes (authentication).** Differences between Lucidity's
-API docs ([docs/api/legacy/auth/auth.md](docs/api/legacy/auth/auth.md)) and this
-provider, and gaps the docs reveal:
+revamped auth API docs ([docs/api/revamp/auth/auth.md](docs/api/revamp/auth/auth.md))
+and this provider, and what is still unconfirmed:
 
 | Topic | API docs | This provider | Impact |
 |---|---|---|---|
-| Where the refresh token comes from | Getting Started: an Admin generates it under Users → their own entry → Generate New Key. API reference: "issued by Lucidity CS". | The steps above (Settings → API Key) | The API docs are marked "stale" on the docs site; the steps above may reflect a newer dashboard. Use whichever your dashboard shows. |
-| Who can create a token | Admins only, and only for their own account | — | Every automation runs as one named Admin. If that person leaves or loses the Admin role, the token stops working. Machine credentials (service accounts or OIDC) are needed from Lucidity's API to fix this. |
-| Token lifetime | Refresh token 30 days by default; access token 15 minutes | Renews the access token 3 minutes early; never stores either token | Rotate the refresh token before 30 days. |
-| Error format | Refresh errors are a flat `{code, message, details}`; other endpoints wrap errors in `{success, data, error, requestId}` | Accepts both formats and shows `details` when present | None. |
-
-The provider takes the refresh token via (exactly one) of the following:
-1. `refresh_token` (to pull from a data source)
-2. `refresh_token_file` (to pull from a safely maintained file)
-3. `refresh_token_command` (generic hook that covers every backend)
-4. `LUCIDITY_REFRESH_TOKEN` env var 
-
-— see `internal/provider/provider.go` for the full schema.
+| Token endpoint | `POST /v1/oauth2/token` for users and service accounts. The doc lists `/public/v1/auth/tokens` and `/external/client/api/v1/auth/token` as replaced. | Uses `/v1/oauth2/token`. The legacy `/external/api/v1/auth/user-token/refresh` (what earlier provider versions used) isn't in the doc's replaced list. | None expected; existing refresh tokens keep working. |
+| Header on API calls | `Authorization: Bearer <token>` | Sends `Authorization: Bearer <token>` **and** the legacy `X-Authtype: lucidity_access_token` | The tenant endpoints are still legacy. Until it's confirmed they accept the new token without `X-Authtype`, the extra header is kept. If they reject the new token entirely, `lucidity_tenant` breaks until the tenant module moves to the revamped API. |
+| API host | The examples use `https://dash-back.lucidity.dev` (the dev host) | Keeps the dashboard URL → API host table unchanged for all five deployments | Unconfirmed that every deployment serves `/v1/oauth2/token` on the same host. |
+| Service accounts | Supported: `clientId` + `clientSecret`; the secret is shown once | Supported (`client_id`, `client_secret*`, `LUCIDITY_CLIENT_*`) | Automation no longer has to run as one named Admin. |
+| Renewal | No refresh token for service accounts: call the endpoint again with the same body | Re-sends the same credentials before the 15-minute expiry | None. |
+| Response and errors | Wrapped in `{success, data / error, requestId}`; branch on `error.code` (`VALIDATION_ERROR`, `INVALID_REQUEST`, `UNAUTHORIZED`, `INTERNAL_ERROR`) | Reads the wrapped token; a 401 names which credential type was rejected; other errors keep their code and `requestId` | Quote the `requestId` to Lucidity support. |
+| Refresh token format | `<accessKey>.<secretKey>`; a token without the `.` gets `400 INVALID_REQUEST` | No client-side check | Existing tokens already use this format. |
 
 
 

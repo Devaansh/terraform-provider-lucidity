@@ -14,13 +14,13 @@ import (
 
 func newTenantTestClient(t *testing.T, mux *http.ServeMux) (*Client, *httptest.Server) {
 	t.Helper()
-	mux.HandleFunc(refreshEndpoint, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(tokenEndpoint, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(refreshResponseBody{AccessToken: "access-token"})
+		writeTokenResponse(w, "access-token")
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	c := NewClient(srv.URL, "refresh-secret", WithHTTPClient(srv.Client()), withRetryBaseDelay(time.Millisecond))
+	c := NewClient(srv.URL, Credentials{RefreshToken: "refresh-secret"}, WithHTTPClient(srv.Client()), withRetryBaseDelay(time.Millisecond))
 	return c, srv
 }
 
