@@ -49,7 +49,7 @@ boundaries. QA test and logs are organized the same way — see
 | Permission validation (cloud IAM vs. Lucidity requirements) | Phase 5 | Not yet implemented | Not yet implemented | Not yet implemented |
 | Lucidity agent installation and status validation | Phase 4 | Not yet implemented | Not yet implemented | Not yet implemented |
 | Onboarding and Disk management | Phase 4 | Not yet implemented | Not yet implemented | Not yet implemented |
-| Lucidity Buffer policy management | Phase 3 | Not yet implemented | Not yet implemented | Not yet implemented |
+| Lucidity Buffer policy management | Phase 3 | In development (not live-tested) | In development (not live-tested) | In development (not live-tested) |
 | Lucidity Temporary buffer management | Phase 3 | Not yet implemented | Not yet implemented | Not yet implemented |
 
 
@@ -462,6 +462,67 @@ The provider uses Lucidity's revamped Tenant Linking API
 Full test evidence: [docs/qa-testing/account-management.md](docs/qa-testing/account-management.md).
 Full schema reference: [docs/resources/tenant.md](docs/resources/tenant.md), [docs/data-sources/tenants.md](docs/data-sources/tenants.md).
 
+
+## Lucidity Scaling Policy Management
+
+Scaling policies set the buffer and size limits Lucidity applies to an
+instance's disks. Three objects:
+
+- `lucidity_scaling_policy`: the policy itself. Every setting is updatable
+  in place, and drift on any setting is detected.
+- `lucidity_scaling_policy_attachment`: attaches a policy to **one**
+  instance; destroying it detaches; drift is detected on refresh. A policy can be attached to many
+  instances: use one attachment per instance, so each team can attach its
+  own instances from its own configuration.
+- `lucidity_scaling_policies` (data source): lists every policy.
+
+```hcl
+resource "lucidity_scaling_policy" "db" {
+  name                      = "prod-db-volumes"
+  min_buffer_in_gb          = 30
+  max_buffer_in_gb          = 300
+  ideal_utilization_percent = 80
+  max_fs_size_in_gb         = 2000
+  min_disk_sku_size         = 8
+  max_disk_sku_size         = 64
+}
+
+resource "lucidity_scaling_policy_attachment" "orders_db" {
+  policy_id = lucidity_scaling_policy.db.id
+  instance_identifier {
+    cloud_provider            = "AWS"
+    cloud_provider_account_id = "123456789012"
+    instance_id               = "i-0abc123def4567890"
+  }
+}
+```
+
+### API documentation notes (scaling policies)
+
+Source: [docs/api/revamp/scaling-policies/scaling-policies-api.pdf](docs/api/revamp/scaling-policies/scaling-policies-api.pdf)
+(`/autoscaler/v1/scaling-policies`).
+
+**How attachments are checked.** On every refresh, the provider asks the
+Instances API ([docs/api/revamp/scaling-policies/instances-api.pdf](docs/api/revamp/scaling-policies/instances-api.pdf),
+`POST /autoscaler/v1/instances`) which policy the instance actually has:
+
+- **Same policy:** nothing to do.
+- **No policy, or a different one** (detached in the dashboard, moved to
+  another policy, instance removed): the attachment is dropped from state
+  with a warning, and the next `plan` shows it will be attached again, so
+  the code stays the source of truth.
+- **Import** is verified the same way: importing an attachment that doesn't
+  exist fails.
+
+| Topic | API docs | This provider |
+|---|---|---|
+| Create response | Doesn't echo `minDiskSkuSize`, `maxDiskSkuSize`, `attachedInstanceCount` (reads 0) | Reads the policy back with `GET /{id}` after create |
+| Update (`PUT`) | Omitted `maxBufferInGb` / disk SKU sizes reset to 0 | Always sends all seven settings |
+| Names | Unique per account (`409 CONFLICT`) | The error names the existing policy's ID and how to import it; a create that fails with a 5xx is recovered by looking the name up |
+| Delete with attachments | Not described | Deletes as asked; what happens to attached instances is unconfirmed |
+| Attaching an instance that already has another policy | Not described | Unconfirmed |
+| Field ranges | `idealUtilizationPercent` 1–100; other ranges not documented | Checks 1–100, and that the other numbers aren't negative |
+| `X-Authtype` | Optional here | Sent anyway (other modules need it) |
 
 ## Future planned improvements
 

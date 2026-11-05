@@ -18,6 +18,15 @@ _Author: Swapnesh Kumar._
   `LUCIDITY_CLIENT_SECRET`). Use either a refresh token or service account
   credentials, never both; mixing them fails at validate time, and both
   types set only in the environment is an error.
+- `lucidity_scaling_policy` resource (create, read, update, delete, import)
+  on the revamped `/autoscaler/v1/scaling-policies` API; drift is detected
+  on every setting.
+- `lucidity_scaling_policy_attachment` resource: attaches a policy to one
+  instance (AWS, Azure, GCP); destroy detaches. Each refresh checks the
+  instance's actual policy via `POST /autoscaler/v1/instances`, so a detach
+  or policy change made outside Terraform is detected and re-attached on
+  the next apply, and imports are verified.
+- `lucidity_scaling_policies` data source.
 
 ### Changed
 
