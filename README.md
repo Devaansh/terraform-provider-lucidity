@@ -392,7 +392,7 @@ instance's disks. Three objects:
 - `lucidity_scaling_policy`: the policy itself. Every setting is updatable
   in place, and drift on any setting is detected.
 - `lucidity_scaling_policy_attachment`: attaches a policy to **one**
-  instance; destroying it detaches. A policy can be attached to many
+  instance; destroying it detaches; drift is detected on refresh. A policy can be attached to many
   instances: use one attachment per instance, so each team can attach its
   own instances from its own configuration.
 - `lucidity_scaling_policies` (data source): lists every policy.
@@ -423,24 +423,17 @@ resource "lucidity_scaling_policy_attachment" "orders_db" {
 Source: [docs/api/revamp/scaling-policies/scaling-policies-api.pdf](docs/api/revamp/scaling-policies/scaling-policies-api.pdf)
 (`/autoscaler/v1/scaling-policies`).
 
-> **API limitation (raised with the Lucidity API team):** the API reports
-> only **how many** instances a policy is attached to
-> (`attachedInstanceCount`), not **which** ones. On every `plan`, Terraform
-> re-checks real state to keep the code the source of truth, and here it
-> can't:
->
-> - **Drift goes unnoticed.** If an instance is detached in the dashboard,
->   moved to another policy, or removed from Lucidity, `plan` still reports
->   "No changes", while the instance runs without the intended policy. A
->   later `destroy` then tries to detach something that isn't attached.
-> - **Imports can't be verified.** `terraform import` of an attachment is
->   recorded as given, so a wrong import ID goes unnoticed.
->
-> Today an attachment leaves state only when its policy is deleted.
->
-> **Proposed fix:** a way to read attachments, ideally a lookup by instance
-> that returns the attached policy's ID (or 404 if none), or a list of a
-> policy's instances on `GET /autoscaler/v1/scaling-policies/{id}/instances`.
+**How attachments are checked.** On every refresh, the provider asks the
+Instances API ([docs/api/revamp/scaling-policies/instances-api.pdf](docs/api/revamp/scaling-policies/instances-api.pdf),
+`POST /autoscaler/v1/instances`) which policy the instance actually has:
+
+- **Same policy:** nothing to do.
+- **No policy, or a different one** (detached in the dashboard, moved to
+  another policy, instance removed): the attachment is dropped from state
+  with a warning, and the next `plan` shows it will be attached again, so
+  the code stays the source of truth.
+- **Import** is verified the same way: importing an attachment that doesn't
+  exist fails.
 
 | Topic | API docs | This provider |
 |---|---|---|

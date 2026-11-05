@@ -26,13 +26,14 @@ type mockPolicyServer struct {
 	mu       sync.Mutex
 	policies map[int64]*client.ScalingPolicy
 	nextID   int64
-	attached map[string]bool // "<policyID>/<instanceID>"
+	attached map[string]bool  // "<policyID>/<instanceID>"
+	policyOf map[string]int64 // instanceID -> attached policy, as the instances API reports it
 	detaches int
 }
 
 func newMockPolicyServer(t *testing.T) (*client.Client, *mockPolicyServer) {
 	t.Helper()
-	m := &mockPolicyServer{policies: map[int64]*client.ScalingPolicy{}, nextID: 33, attached: map[string]bool{}}
+	m := &mockPolicyServer{policies: map[int64]*client.ScalingPolicy{}, nextID: 33, attached: map[string]bool{}, policyOf: map[string]int64{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/external/api/v1/auth/user-token/refresh", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -96,15 +97,40 @@ func newMockPolicyServer(t *testing.T) (*client.Client, *mockPolicyServer) {
 				key := idStr + "/" + i.InstanceID
 				if action == "attach" {
 					m.attached[key] = true
+					m.policyOf[i.InstanceID] = id
 					p.AttachedInstanceCount++
 				} else {
 					delete(m.attached, key)
+					delete(m.policyOf, i.InstanceID)
 					p.AttachedInstanceCount--
 					m.detaches++
 				}
 			}
 			writeMockEnvelope(w, http.StatusOK, true, nil, "", "")
 		}
+	})
+	mux.HandleFunc("/autoscaler/v1/instances", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Instances []client.PolicyInstanceIdentifier `json:"instances"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		out := []map[string]any{}
+		for _, i := range body.Instances {
+			var policy any
+			if pid, ok := m.policyOf[i.InstanceID]; ok {
+				if p, ok := m.policies[pid]; ok {
+					policy = map[string]any{"scalingPolicyId": p.ID, "scalingPolicyName": p.Name}
+				}
+			}
+			out = append(out, map[string]any{
+				"instanceIdentifier": i,
+				"managedPartition":   map[string]any{"instanceState": "running", "partitionEntries": []any{}, "scalingPolicyResponse": policy},
+				"unmanagedPartition": map[string]any{"instanceState": nil, "instanceStatus": nil, "partitionEntries": []any{}},
+			})
+		}
+		writeMockEnvelope(w, http.StatusOK, true, map[string]any{"instances": out}, "", "")
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -320,5 +346,65 @@ func TestScalingPolicyRPC_RegistersResourcesAndDataSource(t *testing.T) {
 	}
 	if _, ok := resp.DataSourceSchemas["lucidity_scaling_policies"]; !ok {
 		t.Error("data source lucidity_scaling_policies not registered")
+	}
+}
+
+func readAttachment(t *testing.T, r *scalingPolicyAttachmentResource, st tfsdk.State) resource.ReadResponse {
+	t.Helper()
+	var resp resource.ReadResponse
+	resp.State = st
+	r.Read(context.Background(), resource.ReadRequest{State: st}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Read: %+v", resp.Diagnostics)
+	}
+	return resp
+}
+
+// Read verifies the attachment against the instance's actual policy:
+// unchanged keeps it; detached or switched elsewhere drops it (so the next
+// plan re-attaches).
+func TestScalingPolicyAttachment_ReadDetectsDrift(t *testing.T) {
+	c, m := newMockPolicyServer(t)
+	m.policies[33] = &client.ScalingPolicy{ID: 33, ScalingPolicySettings: client.ScalingPolicySettings{Name: "p"}}
+	m.policies[34] = &client.ScalingPolicy{ID: 34, ScalingPolicySettings: client.ScalingPolicySettings{Name: "other"}}
+	r := &scalingPolicyAttachmentResource{client: c}
+	sch := schemaOf(t, r)
+	ctx := context.Background()
+
+	var created resource.CreateResponse
+	created.State = tfsdk.State{Schema: sch}
+	r.Create(ctx, resource.CreateRequest{Plan: tfsdk.Plan{Raw: attachmentValue("33", nil), Schema: sch}}, &created)
+
+	if got := readAttachment(t, r, created.State); got.State.Raw.IsNull() {
+		t.Fatal("an attachment that still holds must stay in state")
+	}
+
+	m.policyOf["i-0abc123def4567890"] = 34 // switched to another policy outside Terraform
+	if got := readAttachment(t, r, created.State); !got.State.Raw.IsNull() || !strings.Contains(got.Diagnostics[0].Detail(), "scaling policy 34") {
+		t.Fatalf("a switched policy must drop the attachment and name the new policy, got %+v", got.Diagnostics)
+	}
+
+	delete(m.policyOf, "i-0abc123def4567890") // detached outside Terraform
+	if got := readAttachment(t, r, created.State); !got.State.Raw.IsNull() {
+		t.Fatal("a detached instance must drop the attachment")
+	}
+}
+
+// An import of an attachment that doesn't exist is caught by the Read that
+// follows it.
+func TestScalingPolicyAttachment_ImportIsVerified(t *testing.T) {
+	c, m := newMockPolicyServer(t)
+	m.policies[33] = &client.ScalingPolicy{ID: 33}
+	r := &scalingPolicyAttachmentResource{client: c}
+	sch := schemaOf(t, r)
+
+	var imp resource.ImportStateResponse
+	imp.State = tfsdk.State{Schema: sch, Raw: tftypes.NewValue(attachmentType(), nil)}
+	r.ImportState(context.Background(), resource.ImportStateRequest{ID: "33/AWS/123456789012/i-not-attached"}, &imp)
+	if imp.Diagnostics.HasError() {
+		t.Fatalf("ImportState: %+v", imp.Diagnostics)
+	}
+	if got := readAttachment(t, r, imp.State); !got.State.Raw.IsNull() {
+		t.Fatal("importing an attachment that doesn't exist must end with nothing in state")
 	}
 }

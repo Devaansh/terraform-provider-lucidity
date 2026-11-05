@@ -17,9 +17,10 @@ _Author: Swapnesh Kumar._
   on the revamped `/autoscaler/v1/scaling-policies` API; drift is detected
   on every setting.
 - `lucidity_scaling_policy_attachment` resource: attaches a policy to one
-  instance (AWS, Azure, GCP); destroy detaches. Lucidity's API can't list a
-  policy's instances, so attachments made or removed outside Terraform
-  aren't detected.
+  instance (AWS, Azure, GCP); destroy detaches. Each refresh checks the
+  instance's actual policy via `POST /autoscaler/v1/instances`, so a detach
+  or policy change made outside Terraform is detected and re-attached on
+  the next apply, and imports are verified.
 - `lucidity_scaling_policies` data source.
 
 ### Changed

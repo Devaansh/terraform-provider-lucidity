@@ -101,3 +101,35 @@ func TestCreateScalingPolicy_DoesNotRetry5xx(t *testing.T) {
 		t.Fatalf("got err %v after %d POSTs, want an error after exactly 1", err, posts)
 	}
 }
+
+func TestGetInstances(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc(instancesPath, func(w http.ResponseWriter, r *http.Request) {
+		var body instancesRequest
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if r.Method != http.MethodPost || len(body.Instances) != 2 {
+			t.Fatalf("got %s %+v", r.Method, body)
+		}
+		writeEnvelope(w, http.StatusOK, true, map[string]any{"instances": []map[string]any{
+			{"instanceIdentifier": map[string]any{"cloudProvider": "AWS", "instanceId": "i-1", "tenantId": "tenant-1"},
+				"managedPartition": map[string]any{"scalingPolicyResponse": map[string]any{"scalingPolicyId": 42, "scalingPolicyName": "default-policy"}}},
+			{"instanceIdentifier": map[string]any{"cloudProvider": "AZURE", "instanceId": "vm", "resourceGroup": "rg"},
+				"managedPartition": map[string]any{"scalingPolicyResponse": nil}, "agentVersion": nil},
+		}}, nil, "r")
+	})
+	c, _ := newTenantTestClient(t, mux)
+
+	got, err := c.GetInstances(context.Background(), []PolicyInstanceIdentifier{{CloudProvider: "AWS", InstanceID: "i-1"}, {CloudProvider: "AZURE", InstanceID: "vm", ResourceGroup: "rg"}})
+	if err != nil {
+		t.Fatalf("GetInstances: %v", err)
+	}
+	if p := got[0].ManagedPartition.ScalingPolicy; p == nil || p.ScalingPolicyID != 42 || got[0].InstanceIdentifier.TenantID != "tenant-1" {
+		t.Fatalf("first entry: %+v", got[0])
+	}
+	if got[1].ManagedPartition.ScalingPolicy != nil || got[1].InstanceIdentifier.ResourceGroup != "rg" {
+		t.Fatalf("second entry: %+v", got[1])
+	}
+	if _, err := c.GetInstances(context.Background(), nil); err == nil {
+		t.Fatal("an empty list must be rejected before calling the API")
+	}
+}

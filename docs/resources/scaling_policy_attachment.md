@@ -3,12 +3,12 @@
 page_title: "lucidity_scaling_policy_attachment Resource - lucidity"
 subcategory: ""
 description: |-
-  Attaches a lucidity_scaling_policy to one instance. Destroying it detaches the policy. One policy can be attached to many instances: use one attachment per instance. Lucidity's API reports only how many instances a policy is attached to, not which, so Terraform can't detect an attach or detach made outside Terraform; the attachment is removed from state only if the policy itself is gone.
+  Attaches a lucidity_scaling_policy to one instance. Destroying it detaches the policy. One policy can be attached to many instances: use one attachment per instance. Every refresh checks which policy the instance actually has; if it has none or a different one (changed outside Terraform), the next apply attaches this policy again.
 ---
 
 # lucidity_scaling_policy_attachment (Resource)
 
-Attaches a lucidity_scaling_policy to one instance. Destroying it detaches the policy. One policy can be attached to many instances: use one attachment per instance. Lucidity's API reports only how many instances a policy is attached to, not which, so Terraform can't detect an attach or detach made outside Terraform; the attachment is removed from state only if the policy itself is gone.
+Attaches a lucidity_scaling_policy to one instance. Destroying it detaches the policy. One policy can be attached to many instances: use one attachment per instance. Every refresh checks which policy the instance actually has; if it has none or a different one (changed outside Terraform), the next apply attaches this policy again.
 
 ## Example Usage
 

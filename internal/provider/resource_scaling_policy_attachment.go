@@ -72,7 +72,7 @@ func (r *scalingPolicyAttachmentResource) Schema(_ context.Context, _ resource.S
 	replace := []planmodifier.String{stringplanmodifier.RequiresReplace()}
 	resp.Schema = schema.Schema{
 		Description: "Attaches a lucidity_scaling_policy to one instance. Destroying it detaches the policy. One policy can be attached to many instances: use one attachment per instance. " +
-			"Lucidity's API reports only how many instances a policy is attached to, not which, so Terraform can't detect an attach or detach made outside Terraform; the attachment is removed from state only if the policy itself is gone.",
+			"Every refresh checks which policy the instance actually has; if it has none or a different one (changed outside Terraform), the next apply attaches this policy again.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:    true,
@@ -173,8 +173,8 @@ func instanceFromModel(i *policyInstanceModel) client.PolicyInstanceIdentifier {
 
 // ImportState accepts "<policy_id>/<cloud>/<account>/<instance_id>", or
 // "<policy_id>/AZURE/<subscription>/<resource_group>/<vm_name>" for Azure.
-// The API can't confirm the attachment exists, so import only checks the
-// policy does.
+// The Read that follows checks the instance really has that policy; if not,
+// Terraform reports that the object doesn't exist.
 func (r *scalingPolicyAttachmentResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	parts := strings.Split(req.ID, "/")
 	want := 4
@@ -200,8 +200,6 @@ func (r *scalingPolicyAttachmentResource) ImportState(ctx context.Context, req r
 	}
 	m.ID = types.StringValue(attachmentID(m))
 	resp.Diagnostics.Append(resp.State.Set(ctx, &m)...)
-	resp.Diagnostics.AddWarning("Attachment assumed, not verified",
-		"Lucidity's API can't list which instances a policy is attached to, so import records this attachment without confirming it exists. Only the policy's existence is checked on refresh.")
 }
 
 func (r *scalingPolicyAttachmentResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -224,8 +222,9 @@ func (r *scalingPolicyAttachmentResource) Create(ctx context.Context, req resour
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-// Read can only check that the policy still exists: the API doesn't say
-// which instances it's attached to.
+// Read asks Lucidity which policy the instance actually has
+// (POST /autoscaler/v1/instances). If it has none, or a different one, the
+// attachment is gone: drop it from state so the next plan re-attaches.
 func (r *scalingPolicyAttachmentResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var state scalingPolicyAttachmentModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -237,14 +236,31 @@ func (r *scalingPolicyAttachmentResource) Read(ctx context.Context, req resource
 		resp.Diagnostics.AddError("Invalid policy_id in state", err.Error())
 		return
 	}
-	if _, err := r.client.GetScalingPolicy(ctx, policyID); err != nil {
-		if isNotFound(err) {
-			resp.Diagnostics.AddWarning("Scaling policy no longer found",
-				fmt.Sprintf("Scaling policy %d no longer exists, so this attachment is gone too. Removing it from Terraform state.", policyID))
-			resp.State.RemoveResource(ctx)
+	instance := instanceFromModel(state.InstanceIdentifier)
+
+	details, err := r.client.GetInstances(ctx, []client.PolicyInstanceIdentifier{instance})
+	if err != nil {
+		var apiErr *client.APIError
+		if errors.As(err, &apiErr) && apiErr.HTTPStatus == http.StatusForbidden {
+			resp.Diagnostics.AddError("Instance's cloud account not accessible",
+				fmt.Sprintf("Lucidity says %s account %s doesn't belong to this Lucidity account (%s).", instance.CloudProvider, instance.CloudProviderAccountID, apiErr.Error()))
 			return
 		}
-		resp.Diagnostics.AddError("Unable to read Lucidity scaling policy", err.Error())
+		resp.Diagnostics.AddError("Unable to read Lucidity instance", err.Error())
+		return
+	}
+
+	attached := details[0].ManagedPartition.ScalingPolicy
+	switch {
+	case attached == nil:
+		resp.Diagnostics.AddWarning("Scaling policy no longer attached",
+			fmt.Sprintf("Instance %s has no scaling policy in Lucidity (it was detached outside Terraform, the instance was removed, or its policy was deleted). Removing the attachment from state; the next apply attaches policy %d again if it's still in your configuration.", instance.InstanceID, policyID))
+		resp.State.RemoveResource(ctx)
+		return
+	case attached.ScalingPolicyID != policyID:
+		resp.Diagnostics.AddWarning("Instance has a different scaling policy",
+			fmt.Sprintf("Instance %s now has scaling policy %d (%q), not %d. Removing this attachment from state; the next apply attaches policy %d again if it's still in your configuration.", instance.InstanceID, attached.ScalingPolicyID, attached.ScalingPolicyName, policyID, policyID))
+		resp.State.RemoveResource(ctx)
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
