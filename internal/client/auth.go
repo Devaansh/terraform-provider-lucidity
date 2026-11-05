@@ -14,7 +14,11 @@ import (
 	"time"
 )
 
-const refreshEndpoint = "/external/api/v1/auth/user-token/refresh"
+// tokenEndpoint is the revamped API's single token endpoint for both users
+// (refresh token) and service accounts (client credentials), per the
+// "Access Token Generation - User and Service Accounts" doc. It replaces the
+// legacy /external/api/v1/auth/user-token/refresh.
+const tokenEndpoint = "/v1/oauth2/token"
 
 // AccessTokenTTL is Lucidity's documented access-token lifetime.
 const AccessTokenTTL = 15 * time.Minute
@@ -24,30 +28,59 @@ const AccessTokenTTL = 15 * time.Minute
 // unset — a 3-minute buffer ahead of the real expiry.
 const DefaultProactiveRefreshAge = AccessTokenTTL - 3*time.Minute
 
-// AuthFailedMessage is the required, verbatim diagnostic text for a 401
-// caused by a missing, expired, or revoked refresh token.
-const AuthFailedMessage = "authentication failed (401). Check your refresh token — " +
-	"make sure it has not expired (default lifetime 30 days) and was not revoked. " +
-	"Generate a new token from the Lucidity dashboard (Users → your admin user → Generate Token)."
+// AuthFailedMessage is the diagnostic text for a 401 when the provider
+// authenticates with a user's refresh token.
+const AuthFailedMessage = "authentication failed (401). Lucidity rejected the refresh token — " +
+	"it may be wrong, expired or revoked (expiry is set in the Lucidity dashboard). " +
+	"Generate a new one in the Lucidity dashboard."
 
-// AuthError is returned whenever the refresh token is rejected, whether from
-// the refresh endpoint directly or after a forced refresh+retry on a 401
-// from another endpoint.
-type AuthError struct{}
+// ServiceAccountAuthFailedMessage is the diagnostic text for a 401 when the
+// provider authenticates with service account client credentials. The
+// causes are the ones the token endpoint documents for 401 UNAUTHORIZED.
+const ServiceAccountAuthFailedMessage = "authentication failed (401). Lucidity rejected the service account credentials — " +
+	"the client ID or secret may be wrong, the credential may be revoked or expired, " +
+	"or the service account may be disabled or deleted. Check the service account in the Lucidity dashboard, or create a new credential for it there."
 
-func (AuthError) Error() string { return AuthFailedMessage }
+// AuthError is returned whenever the credentials are rejected, whether by
+// the token endpoint directly or after a forced refresh+retry on a 401 from
+// another endpoint.
+type AuthError struct {
+	// ServiceAccount is true when the rejected credentials were client
+	// credentials rather than a refresh token.
+	ServiceAccount bool
+}
 
-// TokenManager exchanges a long-lived refresh token for short-lived access
-// tokens. It proactively renews ahead of the 15-minute expiry and collapses
-// concurrent callers into a single in-flight refresh, since Terraform runs
-// operations concurrently.
+func (e AuthError) Error() string {
+	if e.ServiceAccount {
+		return ServiceAccountAuthFailedMessage
+	}
+	return AuthFailedMessage
+}
+
+// Credentials are what the provider exchanges for access tokens: exactly
+// one of a user's RefreshToken, or a service account's ClientID and
+// ClientSecret. Never logged.
+type Credentials struct {
+	RefreshToken string
+	ClientID     string
+	ClientSecret string
+}
+
+// IsServiceAccount reports whether these are client credentials.
+func (c Credentials) IsServiceAccount() bool { return c.ClientID != "" }
+
+// TokenManager exchanges credentials (a refresh token or client
+// credentials) for short-lived access tokens. It proactively renews ahead of
+// the 15-minute expiry and collapses concurrent callers into a single
+// in-flight request, since Terraform runs operations concurrently. Renewal
+// re-sends the same credentials: the token endpoint issues no refresh token.
 //
-// The refresh token and every access token it issues live in memory only:
-// TokenManager never persists or logs either.
+// The credentials and every access token they buy live in memory only:
+// TokenManager never persists or logs any of them.
 type TokenManager struct {
-	httpClient   *http.Client
-	baseURL      string
-	refreshToken string
+	httpClient  *http.Client
+	baseURL     string
+	credentials Credentials
 
 	// proactiveRefreshAge and retryBaseDelay are configured by the caller
 	// (NewClient) from provider attributes / test overrides, rather than
@@ -75,11 +108,11 @@ func (m *TokenManager) logDebug(ctx context.Context, msg string, fields map[stri
 
 // NewTokenManager constructs a TokenManager. baseURL must not have a
 // trailing slash requirement enforced by the caller; it is trimmed here.
-func NewTokenManager(httpClient *http.Client, baseURL, refreshToken string, proactiveRefreshAge, retryBaseDelay time.Duration) *TokenManager {
+func NewTokenManager(httpClient *http.Client, baseURL string, credentials Credentials, proactiveRefreshAge, retryBaseDelay time.Duration) *TokenManager {
 	return &TokenManager{
 		httpClient:          httpClient,
 		baseURL:             strings.TrimRight(baseURL, "/"),
-		refreshToken:        refreshToken,
+		credentials:         credentials,
 		proactiveRefreshAge: proactiveRefreshAge,
 		retryBaseDelay:      retryBaseDelay,
 	}
@@ -157,22 +190,32 @@ func (m *TokenManager) ForceRefresh(ctx context.Context, failedToken string) (st
 	return m.AccessToken(ctx)
 }
 
-type refreshRequestBody struct {
-	RefreshToken string `json:"refreshToken"`
+// tokenRequestBody is the POST /v1/oauth2/token body: either refreshToken
+// (user) or clientId + clientSecret (service account), never both.
+type tokenRequestBody struct {
+	RefreshToken string `json:"refreshToken,omitempty"`
+	ClientID     string `json:"clientId,omitempty"`
+	ClientSecret string `json:"clientSecret,omitempty"`
 }
 
-type refreshResponseBody struct {
+// tokenResponseData is the token endpoint's success payload, inside the
+// standard {success,data,requestId} envelope.
+type tokenResponseData struct {
 	AccessToken string `json:"accessToken"`
 }
 
-// doRefresh exchanges the refresh token for a new access token, retrying 5xx
+// doRefresh exchanges the credentials for a new access token, retrying 5xx
 // responses with backoff exactly like Client.Do does for every other
 // endpoint (the retry policy below isn't specific to non-auth calls).
 // Deliberately does not retry raw transport errors — same policy as Do.
 func (m *TokenManager) doRefresh(ctx context.Context) (string, error) {
-	reqBody, err := json.Marshal(refreshRequestBody{RefreshToken: m.refreshToken})
+	body := tokenRequestBody{RefreshToken: m.credentials.RefreshToken}
+	if m.credentials.IsServiceAccount() {
+		body = tokenRequestBody{ClientID: m.credentials.ClientID, ClientSecret: m.credentials.ClientSecret}
+	}
+	reqBody, err := json.Marshal(body)
 	if err != nil {
-		return "", fmt.Errorf("lucidity: encoding refresh request: %w", err)
+		return "", fmt.Errorf("lucidity: encoding token request: %w", err)
 	}
 
 	for attempt := 0; ; attempt++ {
@@ -181,16 +224,18 @@ func (m *TokenManager) doRefresh(ctx context.Context) (string, error) {
 			return "", err
 		}
 
-		// Non-secret metadata only — never reqBody (the refresh token) or
+		// Non-secret metadata only — never reqBody (the credentials) or
 		// respBody (the freshly-issued access token).
-		m.logDebug(ctx, "lucidity refresh token call", map[string]any{
-			"status":  status,
-			"attempt": attempt,
+		m.logDebug(ctx, "lucidity token call", map[string]any{
+			"status":         status,
+			"attempt":        attempt,
+			"serviceAccount": m.credentials.IsServiceAccount(),
+			"requestId":      bestEffortRequestID(respBody),
 		})
 
 		switch {
 		case status == http.StatusUnauthorized:
-			return "", AuthError{}
+			return "", AuthError{ServiceAccount: m.credentials.IsServiceAccount()}
 		case status == http.StatusOK:
 			return parseRefreshResponse(respBody)
 		case status >= 500 && attempt < maxRetryAttempts-1:
@@ -207,33 +252,33 @@ func (m *TokenManager) doRefresh(ctx context.Context) (string, error) {
 }
 
 func (m *TokenManager) doRefreshOnce(ctx context.Context, reqBody []byte) (int, []byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.baseURL+refreshEndpoint, bytes.NewReader(reqBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.baseURL+tokenEndpoint, bytes.NewReader(reqBody))
 	if err != nil {
-		return 0, nil, fmt.Errorf("lucidity: building refresh request: %w", err)
+		return 0, nil, fmt.Errorf("lucidity: building token request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := m.httpClient.Do(req)
 	if err != nil {
-		return 0, nil, fmt.Errorf("lucidity: refresh request failed: %w", err)
+		return 0, nil, fmt.Errorf("lucidity: token request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return 0, nil, fmt.Errorf("lucidity: reading refresh response: %w", err)
+		return 0, nil, fmt.Errorf("lucidity: reading token response: %w", err)
 	}
 	return resp.StatusCode, respBody, nil
 }
 
-// parseRefreshResponse parses the refresh endpoint's success response, which
-// is the bare {"accessToken": "…"} shape, not the generic
-// {success,data,error,requestId} envelope used by every other endpoint — the
-// API docs specify this explicitly.
+// parseRefreshResponse parses the token endpoint's success response: the
+// accessToken inside the standard {success,data,requestId} envelope.
+// decodeEnvelope also accepts a bare {"accessToken": "…"}, the legacy
+// refresh endpoint's shape, so a backend still answering that way works.
 func parseRefreshResponse(respBody []byte) (string, error) {
-	var parsed refreshResponseBody
-	if err := json.Unmarshal(respBody, &parsed); err != nil || parsed.AccessToken == "" {
-		return "", fmt.Errorf("lucidity: unexpected refresh response shape")
+	var parsed tokenResponseData
+	if err := decodeEnvelope(respBody, &parsed); err != nil || parsed.AccessToken == "" {
+		return "", fmt.Errorf("lucidity: unexpected token response shape")
 	}
 	return parsed.AccessToken, nil
 }

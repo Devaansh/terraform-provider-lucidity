@@ -14,6 +14,10 @@ import (
 )
 
 const (
+	// X-Authtype is the legacy API's auth header. The revamped API only
+	// documents "Authorization: Bearer", and Lucidity engineering confirmed
+	// the legacy tenant endpoints accept the new token; X-Authtype is still
+	// sent until it's confirmed unnecessary, then it can go.
 	headerAuthType = "X-Authtype"
 	authTypeValue  = "lucidity_access_token"
 
@@ -196,10 +200,10 @@ func withRetryBaseDelay(d time.Duration) Option {
 	return func(c *Client) { c.retryBaseDelay = d }
 }
 
-// NewClient constructs a Client. refreshToken must already be resolved from
+// NewClient constructs a Client. credentials must already be resolved from
 // whichever provider-config source the user chose (attribute, file, command,
-// or env var) — Client itself is agnostic to where it came from.
-func NewClient(baseURL, refreshToken string, opts ...Option) *Client {
+// or env var) — Client itself is agnostic to where they came from.
+func NewClient(baseURL string, credentials Credentials, opts ...Option) *Client {
 	hc := &http.Client{Timeout: 30 * time.Second}
 	c := &Client{
 		httpClient:          hc,
@@ -211,7 +215,7 @@ func NewClient(baseURL, refreshToken string, opts ...Option) *Client {
 	for _, opt := range opts {
 		opt(c)
 	}
-	c.tokens = NewTokenManager(c.httpClient, baseURL, refreshToken, c.proactiveRefreshAge, c.retryBaseDelay)
+	c.tokens = NewTokenManager(c.httpClient, baseURL, credentials, c.proactiveRefreshAge, c.retryBaseDelay)
 	c.tokens.DebugLog = c.logDebug
 	return c
 }
@@ -310,7 +314,7 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any,
 			if apiErr := cloudAccountValidationError(status, respBody); apiErr != nil {
 				return apiErr
 			}
-			return AuthError{}
+			return AuthError{ServiceAccount: c.tokens.credentials.IsServiceAccount()}
 		case status >= 500:
 			if !retry5xx || attempt >= maxRetryAttempts-1 {
 				return parseErrorBody(status, respBody)
@@ -351,7 +355,7 @@ func (c *Client) doOnce(ctx context.Context, method, path string, bodyBytes []by
 		return 0, nil, fmt.Errorf("lucidity: building request: %w", err)
 	}
 	req.Header.Set(headerAuthType, authTypeValue)
-	req.Header.Set("Authorization", accessToken) // no "Bearer " prefix, enforced here only
+	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)

@@ -28,6 +28,10 @@ func providerConfigType() tftypes.Object {
 			"refresh_token":                    tftypes.String,
 			"refresh_token_file":               tftypes.String,
 			"refresh_token_command":            tftypes.String,
+			"client_id":                        tftypes.String,
+			"client_secret":                    tftypes.String,
+			"client_secret_file":               tftypes.String,
+			"client_secret_command":            tftypes.String,
 			"lucidity_dashboard_url":           tftypes.String,
 			"max_parallel_requests":            tftypes.Number,
 			"proactive_refresh_buffer_minutes": tftypes.Number,
@@ -140,7 +144,7 @@ func TestProviderRPC_ValidateConfig_RejectsMissingLucidityDashboardURL(t *testin
 }
 
 func TestProviderRPC_Configure_ErrorsWithNoTokenSource(t *testing.T) {
-	t.Setenv(envRefreshToken, "")
+	clearCredentialEnv(t)
 	srv := newTestProviderServer(t)
 	cfg := configValue(t, nil)
 
@@ -272,5 +276,40 @@ func TestProviderRPC_ValidateConfig_RejectsZeroMaxParallelRequests(t *testing.T)
 	}
 	if !hasErrorDiagnostic(resp.Diagnostics) {
 		t.Fatalf("expected an error diagnostic for max_parallel_requests=0, got: %+v", resp.Diagnostics)
+	}
+}
+
+func TestProviderRPC_ValidateConfig_RejectsRefreshTokenWithClientCredentials(t *testing.T) {
+	for name, set := range map[string]map[string]tftypes.Value{
+		"refresh_token + client_secret":  {"refresh_token": strVal("t"), "client_secret": strVal("s")},
+		"refresh_token_file + client_id": {"refresh_token_file": strVal("token.txt"), "client_id": strVal("svc-1")},
+		"two client secret sources":      {"client_id": strVal("svc-1"), "client_secret": strVal("s"), "client_secret_command": strVal("echo s")},
+	} {
+		set["lucidity_dashboard_url"] = strVal(testLucidityDashboardURL)
+		set["lucidity_dashboard_account_name"] = strVal("Test Account")
+		resp, err := newTestProviderServer(t).ValidateProviderConfig(context.Background(), &tfprotov6.ValidateProviderConfigRequest{Config: configValue(t, set)})
+		if err != nil {
+			t.Fatalf("%s: ValidateProviderConfig: %v", name, err)
+		}
+		if !hasErrorDiagnostic(resp.Diagnostics) {
+			t.Errorf("%s: expected an error diagnostic, got: %+v", name, resp.Diagnostics)
+		}
+	}
+}
+
+func TestProviderRPC_Configure_SucceedsWithServiceAccount(t *testing.T) {
+	clearCredentialEnv(t)
+	cfg := configValue(t, map[string]tftypes.Value{
+		"client_id":                       strVal("svc-1"),
+		"client_secret":                   strVal("s3cret"),
+		"lucidity_dashboard_account_name": strVal("Test Account"),
+		"lucidity_dashboard_url":          strVal(testLucidityDashboardURL),
+	})
+	resp, err := newTestProviderServer(t).ConfigureProvider(context.Background(), &tfprotov6.ConfigureProviderRequest{Config: cfg})
+	if err != nil {
+		t.Fatalf("ConfigureProvider: %v", err)
+	}
+	if hasErrorDiagnostic(resp.Diagnostics) {
+		t.Fatalf("expected no error diagnostic, got: %+v", resp.Diagnostics)
 	}
 }

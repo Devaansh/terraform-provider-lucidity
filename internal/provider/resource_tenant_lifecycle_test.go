@@ -68,7 +68,7 @@ func newMockLucidityServer(t *testing.T) (*httptest.Server, *mockLucidityServer)
 	m := &mockLucidityServer{tenants: map[string]*mockTenant{}}
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/external/api/v1/auth/user-token/refresh", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/v1/oauth2/token", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"accessToken": "mock-access-token"})
 	})
@@ -273,7 +273,7 @@ func lifecycleValue(overrides map[string]tftypes.Value, ceiOverrides map[string]
 // ACTIVE, so CONFLICT) -> deboard -> re-onboard (INACTIVE, so CONFLICT).
 func TestLifecycle_OnboardReadUpdateDestroySafety(t *testing.T) {
 	srv, _ := newMockLucidityServer(t)
-	c := client.NewClient(srv.URL, "test-token", client.WithHTTPClient(srv.Client()))
+	c := client.NewClient(srv.URL, client.Credentials{RefreshToken: "test-token"}, client.WithHTTPClient(srv.Client()))
 	r := &tenantResource{client: c}
 	sch := tenantSchema(t)
 	ctx := context.Background()
@@ -418,7 +418,7 @@ func mustList(t *testing.T, c *client.Client, ctx context.Context) []client.Tena
 // resource's INACTIVE handling design.
 func TestLifecycle_ReadDetectsOutOfBandDeboard(t *testing.T) {
 	srv, mock := newMockLucidityServer(t)
-	c := client.NewClient(srv.URL, "test-token", client.WithHTTPClient(srv.Client()))
+	c := client.NewClient(srv.URL, client.Credentials{RefreshToken: "test-token"}, client.WithHTTPClient(srv.Client()))
 	r := &tenantResource{client: c}
 	sch := tenantSchema(t)
 	ctx := context.Background()
@@ -464,7 +464,7 @@ func TestLifecycle_ReadDetectsOutOfBandDeboard(t *testing.T) {
 // matching tenant at all.
 func TestLifecycle_ReadRemovesTenantThatNoLongerExists(t *testing.T) {
 	srv, mock := newMockLucidityServer(t)
-	c := client.NewClient(srv.URL, "test-token", client.WithHTTPClient(srv.Client()))
+	c := client.NewClient(srv.URL, client.Credentials{RefreshToken: "test-token"}, client.WithHTTPClient(srv.Client()))
 	r := &tenantResource{client: c}
 	sch := tenantSchema(t)
 	ctx := context.Background()
@@ -504,7 +504,7 @@ func TestLifecycle_ReadRemovesTenantThatNoLongerExists(t *testing.T) {
 // than being masked behind AuthError's generic message.
 func TestLifecycle_OnboardCloudAccountValidationFailure(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/external/api/v1/auth/user-token/refresh", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/v1/oauth2/token", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"accessToken": "mock-access-token"})
 	})
@@ -514,7 +514,7 @@ func TestLifecycle_OnboardCloudAccountValidationFailure(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
-	c := client.NewClient(srv.URL, "test-token", client.WithHTTPClient(srv.Client()))
+	c := client.NewClient(srv.URL, client.Credentials{RefreshToken: "test-token"}, client.WithHTTPClient(srv.Client()))
 	r := &tenantResource{client: c}
 	sch := tenantSchema(t)
 	ctx := context.Background()
@@ -606,7 +606,7 @@ func fastPolling(t *testing.T) {
 func newLifecycleResource(t *testing.T) (*tenantResource, *mockLucidityServer, *client.Client) {
 	t.Helper()
 	srv, mock := newMockLucidityServer(t)
-	c := client.NewClient(srv.URL, "test-token", client.WithHTTPClient(srv.Client()))
+	c := client.NewClient(srv.URL, client.Credentials{RefreshToken: "test-token"}, client.WithHTTPClient(srv.Client()))
 	return &tenantResource{client: c}, mock, c
 }
 
