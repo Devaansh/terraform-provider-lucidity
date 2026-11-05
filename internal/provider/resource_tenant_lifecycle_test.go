@@ -632,6 +632,14 @@ func TestLifecycle_ImportState(t *testing.T) {
 			t.Fatal("expected an error diagnostic for a malformed import ID, got none")
 		}
 	})
+
+	t.Run("non-AWS", func(t *testing.T) {
+		resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: sch, Raw: tftypes.NewValue(sch.Type().TerraformType(ctx), nil)}}
+		r.ImportState(ctx, resource.ImportStateRequest{ID: "AZURE/sub-1"}, resp)
+		if !resp.Diagnostics.HasError() {
+			t.Fatal("expected an error diagnostic for an AZURE import ID, got none")
+		}
+	})
 }
 
 // --- external ID read/update + import ------------------------------------
@@ -748,19 +756,6 @@ func TestLifecycle_ReadExternalIDDriftAndBackcompat(t *testing.T) {
 		_, m := runRead(t, r, prior())
 		if got := m.CloudEntityInformation.ExternalID.ValueString(); got != extIDA {
 			t.Fatalf("absent externalId key must not wipe state, got %q", got)
-		}
-	})
-	t.Run("azure never adopts an external id", func(t *testing.T) {
-		r, mock, _ := newLifecycleResource(t)
-		mock.tenants["sub-1"] = &mockTenant{TenantID: "t", CloudProvider: "AZURE", CloudProviderAccountID: "sub-1",
-			DisplayName: "az", Status: client.TenantStatusActive, ExternalID: ptr(extIDB)}
-		az := lifecycleValue(nil, map[string]tftypes.Value{
-			"cloud_provider": strVal("AZURE"), "cloud_provider_account_id": strVal("sub-1"),
-			"aws_iam_external_id": tftypes.NewValue(tftypes.String, nil),
-		})
-		_, m := runRead(t, r, az)
-		if !m.CloudEntityInformation.ExternalID.IsNull() {
-			t.Fatalf("AZURE state must keep a null aws_iam_external_id, got %q", m.CloudEntityInformation.ExternalID.ValueString())
 		}
 	})
 }

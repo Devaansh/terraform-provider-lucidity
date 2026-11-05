@@ -44,8 +44,8 @@ boundaries. QA test and logs are organized the same way — see
 | Section | Provider phase | Status (AWS) | Status (Azure) | Status (GCP) |
 |---|---|---|---|---|
 | Provider Authentication management | Phase 1 | Shipped | Shipped | Shipped |
-| Lucidity dashboard account management | Phase 2 | Shipped | WIP | WIP |
-| Lucidity dashboard user management | Phase 4 | Not yet implemented | Not yet implemented | Not yet implemented |
+| Lucidity dashboard account management | Phase 2 | Shipped | Not yet supported by Lucidity | Not yet supported by Lucidity |
+| Lucidity dashboard user management | Phase 4 | Read-only (users, roles) | Read-only (users, roles) | Read-only (users, roles) |
 | Permission validation (cloud IAM vs. Lucidity requirements) | Phase 5 | Not yet implemented | Not yet implemented | Not yet implemented |
 | Lucidity agent installation and status validation | Phase 4 | Not yet implemented | Not yet implemented | Not yet implemented |
 | Onboarding and Disk management | Phase 4 | Not yet implemented | Not yet implemented | Not yet implemented |
@@ -316,11 +316,13 @@ Vault policy granting `read` on that KV path.
 Manages a cloud account as a Lucidity tenant: onboard it, modify it, deboard it.
 Two objects: the `lucidity_tenant` resource and the `lucidity_tenants` data source.
 
-| Cloud | Onboard (new) | Modify / deboard / import |
-|---|---|---|
-| AWS | Supported | Supported |
-| Azure | Not yet supported by Lucidity | Supported — bring it in via `terraform import` |
-| GCP | Not yet supported by Lucidity | Supported — bring it in via `terraform import` |
+| Cloud | Onboard / modify / deboard / import |
+|---|---|
+| AWS | Supported |
+| Azure | Not yet supported by Lucidity (neither the legacy nor the revamped API) |
+| GCP | Not yet supported by Lucidity (neither the legacy nor the revamped API) |
+
+`lucidity_tenants` still lists every tenant on the account, whatever its cloud.
 
 ### Onboarding a new AWS account
 
@@ -346,8 +348,8 @@ resource "lucidity_tenant" "example" {
 }
 ```
 
-Azure and GCP account onboarding is not supported yet — only AWS accounts
-can be onboarded through this provider today (see the support table above).
+Only AWS accounts can be managed through this provider today (see the
+support table above); `cloud_provider` accepts `AWS` only.
 
 ### Modifying a tenant
 
@@ -355,7 +357,6 @@ can be onboarded through this provider today (see the support table above).
 |---|---|
 | `lucidity_dashboard_display_name` | Yes |
 | `aws_iam_role_name` / `aws_iam_policy_name` (AWS) | Yes |
-| `azure_service_principal_id` / `azure_directory_id` (Azure) | Yes |
 | `cloud_provider`, `cloud_provider_account_id` | No — different tenant, forces replace |
 | `aws_iam_external_id` | Yes — Lucidity returns and accepts it now. **Update your IAM role's trust policy first**, then change the value: Lucidity re-validates by assuming the role and rejects the update otherwise |
 | `lucidity_product_list` | No — not supported by Lucidity's update API; changing a value already in state forces replace |
@@ -433,16 +434,19 @@ normal update on the next `apply`.
 The provider uses Lucidity's revamped Tenant Linking API
 ([docs/api/revamp/tenants/tenant-linking-api.pdf](docs/api/revamp/tenants/tenant-linking-api.pdf)):
 
-| Call | AWS | Azure / GCP |
-|---|---|---|
-| List | `GET /v1/tenants` | `GET /v1/tenants` |
-| Read one | `GET /v1/tenants/{tenantId}` | `GET /v1/tenants/{tenantId}` |
-| Onboard | `POST /v1/tenants/aws/onboard` | Not supported (no revamped endpoint yet) |
-| Update | `PATCH /v1/tenants/aws` | Legacy `PATCH /external/client/api/v1/tenants` (deprecated) |
-| Deboard | `PUT /v1/tenants/aws/deboard` | Legacy `PUT /external/client/api/v1/tenants/deboard` (deprecated) |
+| Call | Endpoint |
+|---|---|
+| List | `GET /v1/tenants` (every cloud) |
+| Read one | `GET /v1/tenants/{tenantId}` |
+| Onboard | `POST /v1/tenants/aws/onboard` |
+| Update | `PATCH /v1/tenants/aws` |
+| Deboard | `PUT /v1/tenants/aws/deboard` |
 
-- **Azure and GCP** stay on the deprecated legacy endpoints until
-  `/v1/tenants/azure` and `/v1/tenants/gcp` exist.
+- **AWS only.** The `/v1/tenants/aws/...` endpoints replace the legacy
+  `/external/client/api/v1/tenants` ones (same request fields, with the
+  cloud moved into the path). Neither generation supports Azure or GCP;
+  Lucidity will add them as `/v1/tenants/azure` and `/v1/tenants/gcp`. The
+  provider no longer calls the legacy tenant endpoints.
 - **Missing IAM permissions** at onboard now come back as a 400 naming the
   permissions; the provider shows them and suggests
   `skip_cloud_permission_check` only for custom permission sets.

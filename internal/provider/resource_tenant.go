@@ -44,11 +44,11 @@ var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 
 // awsAccountIDPattern validates cloud_provider_account_id when
 // cloud_provider is AWS — checked in ValidateConfig, not as a schema
-// Validator, since the field is shared with AZURE/GCP (subscription ID/
-// name, project ID) which don't share this exact-12-digits shape. Lucidity
-// applies no format check on this field server-side either, so a malformed
-// value was previously only caught much later as the same ambiguous
-// cloud-account-validation failure as a wrong-but-well-formed account.
+// Validator, so the field can take Azure/GCP shapes once Lucidity supports
+// those clouds. Lucidity applies no format check on this field server-side
+// either, so a malformed value was previously only caught much later as the
+// same ambiguous cloud-account-validation failure as a wrong-but-well-formed
+// account.
 var awsAccountIDPattern = regexp.MustCompile(`^\d{12}$`)
 
 func newTenantResource() resource.Resource {
@@ -64,13 +64,11 @@ type tenantResource struct {
 // explicit, twice-repeated call to write the reference example "as per
 // terraform" with no JSON-like data-structure standing in for real HCL.
 type cloudEntityInformationModel struct {
-	CloudProvider           types.String `tfsdk:"cloud_provider"`
-	CloudProviderAccountID  types.String `tfsdk:"cloud_provider_account_id"`
-	ExternalID              types.String `tfsdk:"aws_iam_external_id"`
-	AWSIAMRoleName          types.String `tfsdk:"aws_iam_role_name"`
-	AWSIAMPolicyName        types.String `tfsdk:"aws_iam_policy_name"`
-	AzureServicePrincipalID types.String `tfsdk:"azure_service_principal_id"`
-	AzureDirectoryID        types.String `tfsdk:"azure_directory_id"`
+	CloudProvider          types.String `tfsdk:"cloud_provider"`
+	CloudProviderAccountID types.String `tfsdk:"cloud_provider_account_id"`
+	ExternalID             types.String `tfsdk:"aws_iam_external_id"`
+	AWSIAMRoleName         types.String `tfsdk:"aws_iam_role_name"`
+	AWSIAMPolicyName       types.String `tfsdk:"aws_iam_policy_name"`
 }
 
 type tenantResourceModel struct {
@@ -108,8 +106,7 @@ func (r *tenantResource) Configure(_ context.Context, req resource.ConfigureRequ
 func (r *tenantResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "Connects one cloud account to Lucidity as a managed tenant. One resource per cloud account. " +
-			"Onboarding (terraform apply creating a NEW resource) is AWS-only for now — Lucidity's Azure/GCP onboarding API isn't complete yet and returns 400 INVALID_REQUEST; support is pending a future Lucidity release. " +
-			"AZURE and GCP tenants can still be managed here via terraform import (they already exist on Lucidity some other way): List, Update, and Deboard all accept every provider. " +
+			"AWS only for now: Lucidity's tenant API (onboard, update, deboard) supports AWS accounts only; Azure and GCP will follow in a later Lucidity release. " +
 			"Deboarding is IRREVERSIBLE via API: see lucidity_dashboard_account_delete_protection and lucidity_account_destroy_behavior below before running terraform destroy.",
 		Blocks: map[string]schema.Block{
 			"cloud_entity_information": schema.SingleNestedBlock{
@@ -117,9 +114,9 @@ func (r *tenantResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Attributes: map[string]schema.Attribute{
 					"cloud_provider": schema.StringAttribute{
 						Required:    true,
-						Description: "AWS, AZURE, or GCP. Onboarding a brand-new resource is AWS-only for now (Azure/GCP onboarding isn't complete on Lucidity's side yet and returns 400 INVALID_REQUEST — pending a future Lucidity release) — an AZURE/GCP resource can only enter Terraform via `terraform import` of a tenant that already exists on Lucidity.",
+						Description: "Must be AWS: Lucidity's tenant API supports AWS accounts only for now. AZURE and GCP will be accepted once Lucidity supports them.",
 						Validators: []validator.String{
-							stringvalidator.OneOf("AWS", "AZURE", "GCP"),
+							stringvalidator.OneOf("AWS"),
 						},
 						PlanModifiers: []planmodifier.String{
 							stringplanmodifier.RequiresReplace(),
@@ -127,15 +124,15 @@ func (r *tenantResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					},
 					"cloud_provider_account_id": schema.StringAttribute{
 						Required: true,
-						Description: "The cloud's own identifier for the account: the AWS account ID, the Azure subscription ID (or subscription name), or the GCP project ID. Not a display name. " +
-							"For AWS specifically, must be exactly 12 digits — validated client-side, since Lucidity's own API applies no format check here either.",
+						Description: "The AWS account ID. Not a display name. " +
+							"Must be exactly 12 digits — validated client-side, since Lucidity's own API applies no format check here either.",
 						PlanModifiers: []planmodifier.String{
 							stringplanmodifier.RequiresReplace(),
 						},
 					},
 					"aws_iam_external_id": schema.StringAttribute{
 						Optional: true,
-						Description: "AWS only — required for onboarding, ignored for AZURE/GCP. Must be a UUID (Lucidity's own API applies no format check server-side, so this provider validates it client-side to catch typos before any API call). Generate one yourself and put it in your IAM role's trust policy. Lucidity sends it on every AssumeRole so your role only trusts requests carrying it. " +
+						Description: "Required for onboarding. Must be a UUID (Lucidity's own API applies no format check server-side, so this provider validates it client-side to catch typos before any API call). Generate one yourself and put it in your IAM role's trust policy. Lucidity sends it on every AssumeRole so your role only trusts requests carrying it. " +
 							"Readable and updatable in place: Lucidity returns it from List (so `terraform import` recovers it and drift is detected) and accepts a new value via update. " +
 							"To rotate it, update your IAM role's trust policy FIRST, then change this value — Lucidity re-validates by assuming your role with the new value, and rejects the update if the trust policy doesn't already match.",
 						Validators: []validator.String{
@@ -144,19 +141,11 @@ func (r *tenantResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					},
 					"aws_iam_role_name": schema.StringAttribute{
 						Optional:    true,
-						Description: "AWS only — required for onboarding, ignored for AZURE/GCP. The IAM role name only (e.g. \"LucidityRole\"), not the full ARN — Lucidity builds the ARN for you. Updatable in-place after onboarding via the tenant update API.",
+						Description: "Required for onboarding. The IAM role name only (e.g. \"LucidityRole\"), not the full ARN — Lucidity builds the ARN for you. Updatable in-place after onboarding via the tenant update API.",
 					},
 					"aws_iam_policy_name": schema.StringAttribute{
 						Optional:    true,
-						Description: "AWS only — required for onboarding, ignored for AZURE/GCP. e.g. \"LucidityPolicy\". Updatable in-place after onboarding via the tenant update API.",
-					},
-					"azure_service_principal_id": schema.StringAttribute{
-						Optional:    true,
-						Description: "AZURE only. New service principal id. Not usable at onboard time (Azure onboarding isn't supported) — only meaningful when updating an imported AZURE tenant. Updatable in-place; merged into Lucidity's stored authInfo.",
-					},
-					"azure_directory_id": schema.StringAttribute{
-						Optional:    true,
-						Description: "AZURE only. AD directory (tenant) id. Not usable at onboard time (Azure onboarding isn't supported) — only meaningful when updating an imported AZURE tenant. Updatable in-place; merged into Lucidity's stored authInfo.",
+						Description: "Required for onboarding. e.g. \"LucidityPolicy\". Updatable in-place after onboarding via the tenant update API.",
 					},
 				},
 			},
@@ -179,7 +168,7 @@ func (r *tenantResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			"lucidity_product_list": schema.ListAttribute{
 				Optional:    true,
 				ElementType: types.StringType,
-				Description: "AWS only — required for onboarding (non-empty), ignored for AZURE/GCP (Update doesn't accept it for any provider, and List never returns it, so it can't be recovered by import either). Only \"AUTOSCALER\" is supported today. Not updatable via any documented API — changing a value already recorded in state forces a replace (re-onboard). Not returned by List either, so after `terraform import` it is assumed to match your config rather than compared (a future Lucidity release is expected to expose it).",
+				Description: "Required for onboarding (non-empty). Update doesn't accept it, and List never returns it, so it can't be recovered by import either. Only \"AUTOSCALER\" is supported today. Not updatable via any documented API — changing a value already recorded in state forces a replace (re-onboard). Not returned by List either, so after `terraform import` it is assumed to match your config rather than compared (a future Lucidity release is expected to expose it).",
 				Validators: []validator.List{
 					listvalidator.SizeAtLeast(1),
 					listvalidator.ValueStringsAre(stringvalidator.OneOf("AUTOSCALER")),
@@ -244,12 +233,11 @@ func (r *tenantResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 }
 
 // ValidateConfig enforces "AWS onboarding needs these fields" as a config
-// invariant rather than a blanket schema Required — Required would force
-// every AZURE/GCP resource (which only ever enters Terraform via import,
-// since onboarding is AWS-only) to fill in meaningless AWS IAM fields just
-// to satisfy the schema. This runs on every plan (create AND update), which
-// is correct: the invariant "AWS needs these" holds regardless of which
-// operation is happening.
+// invariant rather than a blanket schema Required, so Azure/GCP (which
+// won't need the AWS IAM fields) can be added later without a schema
+// change. This runs on every plan (create AND update), which is correct:
+// the invariant "AWS needs these" holds regardless of which operation is
+// happening.
 func (r *tenantResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
 	var cfg tenantResourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
@@ -289,7 +277,7 @@ func (r *tenantResource) ValidateConfig(ctx context.Context, req resource.Valida
 		resp.Diagnostics.AddError(
 			"Missing required fields for AWS onboarding",
 			fmt.Sprintf(
-				"cloud_provider is \"AWS\", which requires: %s. These are only required for AWS — onboarding is AWS-only, so an AZURE or GCP resource (which can only enter Terraform via terraform import) doesn't need them.",
+				"cloud_provider is \"AWS\", which requires: %s.",
 				strings.Join(missing, ", "),
 			),
 		)
@@ -354,9 +342,8 @@ func (r *tenantResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 
 func (r *tenantResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	// Expected form: "<cloud_provider>/<cloud_provider_account_id>", e.g.
-	// "AWS/123456789012" or "AZURE/<subscription-id>" or "GCP/<project-id>".
-	// This is also the ONLY way an AZURE/GCP tenant enters Terraform at all,
-	// since onboarding (Create) is AWS-only.
+	// "AWS/123456789012". Only AWS for now; the cloud stays in the ID so
+	// Azure/GCP import IDs won't need a new format later.
 	parts := strings.SplitN(req.ID, "/", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		resp.Diagnostics.AddError(
@@ -366,6 +353,13 @@ func (r *tenantResource) ImportState(ctx context.Context, req resource.ImportSta
 		return
 	}
 	cloudProvider, accountID := parts[0], parts[1]
+	if cloudProvider != "AWS" {
+		resp.Diagnostics.AddError(
+			"Only AWS tenants can be imported",
+			fmt.Sprintf("Lucidity's tenant API supports AWS accounts only for now; got cloud provider %q in import ID %q.", cloudProvider, req.ID),
+		)
+		return
+	}
 
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("cloud_entity_information").AtName("cloud_provider"), cloudProvider)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("cloud_entity_information").AtName("cloud_provider_account_id"), accountID)...)
@@ -377,9 +371,8 @@ func (r *tenantResource) ImportState(ctx context.Context, req resource.ImportSta
 	resp.Diagnostics.AddWarning(
 		"Some lucidity_tenant fields are assumed, not read, on import",
 		"After import, aws_iam_external_id and lucidity_dashboard_display_name are read from Lucidity (List returns them); a mismatch with your config is reconciled in place on the next apply (an external ID update is validated against your IAM role's trust policy — update the trust policy first). "+
-			"aws_iam_role_name, aws_iam_policy_name, azure_service_principal_id, and azure_directory_id are not returned by List and are likewise reconciled via a normal update on the next apply. "+
-			"lucidity_product_list and aws_org_root_id are not returned by List either: they are assumed to match your config and simply recorded on the next apply (never compared, never forcing a replace). skip_cloud_permission_check is onboard-only and local. "+
-			"For an AZURE or GCP tenant, leave the AWS-only fields (aws_iam_external_id, aws_iam_role_name, aws_iam_policy_name) unset entirely — they're only required when cloud_provider is AWS.",
+			"aws_iam_role_name and aws_iam_policy_name are not returned by List and are likewise reconciled via a normal update on the next apply. "+
+			"lucidity_product_list and aws_org_root_id are not returned by List either: they are assumed to match your config and simply recorded on the next apply (never compared, never forcing a replace). skip_cloud_permission_check is onboard-only and local.",
 	)
 }
 
@@ -392,18 +385,6 @@ func (r *tenantResource) Create(ctx context.Context, req resource.CreateRequest,
 
 	cloudProvider := plan.CloudEntityInformation.CloudProvider.ValueString()
 	accountID := plan.CloudEntityInformation.CloudProviderAccountID.ValueString()
-
-	if cloudProvider != "AWS" {
-		resp.Diagnostics.AddError(
-			"Onboarding is AWS-only for now",
-			fmt.Sprintf(
-				"Cannot create a new lucidity_tenant for cloud_provider %q: Lucidity's Azure/GCP onboarding API isn't complete yet and returns 400 INVALID_REQUEST — support is pending a future Lucidity release. "+
-					"If cloud account %s already exists as a tenant on Lucidity some other way, use `terraform import lucidity_tenant.<name> %s/%s` instead of creating it fresh.",
-				cloudProvider, accountID, cloudProvider, accountID,
-			),
-		)
-		return
-	}
 
 	// Pre-check kept even though onboard's own 409 CONFLICT now covers both
 	// cases natively: this list-and-match stays the primary mechanism, the
@@ -725,14 +706,6 @@ func (r *tenantResource) Update(ctx context.Context, req resource.UpdateRequest,
 	}
 	if !plan.CloudEntityInformation.AWSIAMPolicyName.Equal(state.CloudEntityInformation.AWSIAMPolicyName) {
 		updateReq.CloudEntityInformation.AWSIAMPolicyName = plan.CloudEntityInformation.AWSIAMPolicyName.ValueString()
-		changed = true
-	}
-	if !plan.CloudEntityInformation.AzureServicePrincipalID.Equal(state.CloudEntityInformation.AzureServicePrincipalID) {
-		updateReq.CloudEntityInformation.AzureServicePrincipalID = plan.CloudEntityInformation.AzureServicePrincipalID.ValueString()
-		changed = true
-	}
-	if !plan.CloudEntityInformation.AzureDirectoryID.Equal(state.CloudEntityInformation.AzureDirectoryID) {
-		updateReq.CloudEntityInformation.AzureDirectoryID = plan.CloudEntityInformation.AzureDirectoryID.ValueString()
 		changed = true
 	}
 

@@ -33,21 +33,25 @@ _Author: Swapnesh Kumar._
 
 ### Changed
 
+- **Breaking:** `lucidity_tenant` is AWS-only. `cloud_provider` accepts
+  `AWS` only, and `terraform import` accepts `AWS/<account-id>` only.
+  Lucidity's tenant API (legacy and revamped) has never supported Azure or
+  GCP, so these paths could not work; they return when Lucidity adds
+  `/v1/tenants/azure` and `/v1/tenants/gcp`. `lucidity_tenants` still lists
+  tenants of every cloud.
 - Authentication moved to the revamped token endpoint
   `POST /v1/oauth2/token` (was `/external/api/v1/auth/user-token/refresh`).
   The token response is read from the standard envelope (a bare
   `{"accessToken": ...}` is still accepted). Existing refresh tokens keep
   working.
 - API calls now send `Authorization: Bearer <token>` (was the raw token).
-  `X-Authtype: lucidity_access_token` is still sent alongside for now; the
-  legacy tenant endpoints accept the new token.
+  `X-Authtype: lucidity_access_token` is still sent alongside for now.
 - A 401 now says which credential type was rejected (refresh token or
   service account), with the causes the token endpoint documents.
 - AWS tenants use the revamped Tenant Linking API: `POST /v1/tenants/aws/onboard`,
   `PATCH /v1/tenants/aws`, `PUT /v1/tenants/aws/deboard` (account ID at the
-  top level of the body), and `GET /v1/tenants` for listing. Azure/GCP
-  update and deboard stay on the deprecated legacy endpoints until their
-  `/v1` versions exist.
+  top level of the body), and `GET /v1/tenants` for listing. The provider
+  no longer calls the legacy tenant endpoints.
 - Refresh reads a tenant with `GET /v1/tenants/{tenantId}` when `tenant_id`
   is known, instead of listing every tenant; a 404 removes it from state.
 - Onboard reports missing IAM permissions (revamped 400) as an actionable
@@ -58,6 +62,12 @@ _Author: Swapnesh Kumar._
   parsed (code, message and details shown) instead of reported as
   `UNKNOWN`. The refresh-token and temporary buffer API docs specify these
   shapes; enveloped responses behave as before.
+
+### Removed
+
+- `azure_service_principal_id` and `azure_directory_id` from
+  `lucidity_tenant`'s `cloud_entity_information` (no Lucidity API accepts
+  them). Remove them from your configuration if set.
 
 ## [0.1.7] - 2026-10-10
 

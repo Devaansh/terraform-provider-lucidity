@@ -496,35 +496,23 @@ func TestUpdateTenant_AWSBody(t *testing.T) {
 	}
 }
 
-// Azure and GCP keep using the deprecated legacy endpoints until
-// /v1/tenants/azure and /gcp exist.
-func TestTenantCalls_NonAWSUseLegacyEndpoints(t *testing.T) {
-	var hits []string
+// Only AWS is supported by the tenant API (legacy and revamped alike);
+// other clouds fail before any request is sent.
+func TestTenantCalls_NonAWSRejectedWithoutRequest(t *testing.T) {
 	mux := http.NewServeMux()
-	for _, p := range []string{legacyTenantsPath, legacyTenantsDeboardPath} {
-		p := p
-		mux.HandleFunc(p, func(w http.ResponseWriter, r *http.Request) {
-			var body map[string]map[string]any
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			if body["cloudEntityInformation"]["cloudProvider"] != "AZURE" {
-				t.Fatalf("legacy body must carry cloudProvider, got %v", body)
-			}
-			hits = append(hits, r.Method+" "+p)
-			writeEnvelope(w, http.StatusOK, true, map[string]any{}, nil, "r")
-		})
-	}
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("no request expected for a non-AWS tenant, got %s %s", r.Method, r.URL.Path)
+	})
 	c, _ := newTenantTestClient(t, mux)
-	if _, err := c.UpdateTenant(context.Background(), UpdateTenantRequest{
-		CloudEntityInformation: CloudEntityInformation{CloudProvider: "AZURE", CloudProviderAccountID: "sub-1"},
-		DisplayName:            "x",
-	}); err != nil {
-		t.Fatalf("UpdateTenant: %v", err)
+	ctx := context.Background()
+	if _, err := c.OnboardTenant(ctx, OnboardTenantRequest{CloudEntityInformation: CloudEntityInformation{CloudProvider: "AZURE", CloudProviderAccountID: "sub-1"}}); err == nil {
+		t.Fatal("OnboardTenant: expected an error for AZURE")
 	}
-	if _, err := c.DeboardTenant(context.Background(), "AZURE", "sub-1"); err != nil {
-		t.Fatalf("DeboardTenant: %v", err)
+	if _, err := c.UpdateTenant(ctx, UpdateTenantRequest{CloudEntityInformation: CloudEntityInformation{CloudProvider: "GCP", CloudProviderAccountID: "p-1"}, DisplayName: "x"}); err == nil {
+		t.Fatal("UpdateTenant: expected an error for GCP")
 	}
-	if len(hits) != 2 || hits[0] != "PATCH "+legacyTenantsPath || hits[1] != "PUT "+legacyTenantsDeboardPath {
-		t.Fatalf("got %v, want the legacy PATCH and PUT", hits)
+	if _, err := c.DeboardTenant(ctx, "AZURE", "sub-1"); err == nil {
+		t.Fatal("DeboardTenant: expected an error for AZURE")
 	}
 }
 
