@@ -27,6 +27,9 @@ _Author: Swapnesh Kumar._
   or policy change made outside Terraform is detected and re-attached on
   the next apply, and imports are verified.
 - `lucidity_scaling_policies` data source.
+- `lucidity_users` data source (filters `email`, `role`, `status`; follows
+  every page) and `lucidity_roles` data source, on the revamped User
+  Management API (`GET /v1/users`, `GET /v1/roles`).
 
 ### Changed
 

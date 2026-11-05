@@ -524,6 +524,39 @@ Instances API ([docs/api/revamp/scaling-policies/instances-api.pdf](docs/api/rev
 | Field ranges | `idealUtilizationPercent` 1–100; other ranges not documented | Checks 1–100, and that the other numbers aren't negative |
 | `X-Authtype` | Optional here | Sent anyway (other modules need it) |
 
+## Lucidity User Management
+
+Read-only for now:
+
+- `lucidity_users` (data source): lists the account's users, optionally
+  filtered by `email` (substring), `role` or `status`.
+- `lucidity_roles` (data source): lists the roles users can be granted.
+
+```hcl
+data "lucidity_users" "active" {
+  status = "ACTIVE"
+}
+
+data "lucidity_roles" "all" {}
+```
+
+A `lucidity_user` resource (invite, change roles, remove) will follow once
+the API can read, update and remove a single user.
+
+### API documentation notes (user management)
+
+Source: [docs/api/revamp/user-management/user-management-api.pdf](docs/api/revamp/user-management/user-management-api.pdf)
+(`/v1/users`, `/v1/roles`).
+
+| Topic | API docs | This provider |
+|---|---|---|
+| Single-user endpoints | `GET`, `PATCH` and `DELETE` on `/v1/users/{userId}` not available yet (users are identified by email) | No `lucidity_user` resource yet: without update and delete it couldn't change roles or remove users |
+| Inviting users (`POST /v1/users`) | Available; account admins only | Not used until the resource exists; invite in the dashboard |
+| Pagination | `page` (zero-based) and `pageSize` (1–100) | Fetches every page, 100 users at a time |
+| `status` not set | Removed users are included as `DISABLED` | Same; set `status = "ACTIVE"` to leave them out |
+| Account admins | `roleAssignments` is empty; admin is not a role | Shown as `is_account_admin = true` with empty `role_assignments` |
+| Lucidity staff | Hidden from the list | Same |
+
 ## Future planned improvements
 
 No blockers, however gaps found during live QA testing that need changes on Lucidity's own API

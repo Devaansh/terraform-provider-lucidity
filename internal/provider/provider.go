@@ -234,5 +234,7 @@ func (p *LucidityProvider) DataSources(_ context.Context) []func() datasource.Da
 	return []func() datasource.DataSource{
 		newTenantsDataSource,
 		newScalingPoliciesDataSource,
+		newUsersDataSource,
+		newRolesDataSource,
 	}
 }
