@@ -36,8 +36,9 @@ type envelope struct {
 }
 
 type envelopeError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code    string          `json:"code"`
+	Message string          `json:"message"`
+	Details json.RawMessage `json:"details,omitempty"`
 }
 
 // flatError is the unwrapped {code,message,details} error shape the API docs
@@ -79,6 +80,7 @@ func parseErrorBody(status int, body []byte) error {
 			Code:       env.Error.Code,
 			Message:    env.Error.Message,
 			RequestID:  env.RequestID,
+			Details:    detailsText(env.Error.Details),
 		}
 	}
 	var flat flatError
@@ -88,9 +90,7 @@ func parseErrorBody(status int, body []byte) error {
 			Code:       flat.Code,
 			Message:    flat.Message,
 		}
-		if d := strings.TrimSpace(string(flat.Details)); d != "" && d != "null" && d != "{}" {
-			apiErr.Details = truncate(d, 500)
-		}
+		apiErr.Details = detailsText(flat.Details)
 		return apiErr
 	}
 	// Render unmapped/unparseable bodies generically but completely
@@ -127,6 +127,17 @@ func cloudAccountValidationError(status int, body []byte) *APIError {
 		Message:    env.Error.Message,
 		RequestID:  env.RequestID,
 	}
+}
+
+// detailsText renders an error's optional "details" (e.g. the revamped
+// API's [{field, message}] list for VALIDATION_ERROR) for display, or ""
+// when there are none.
+func detailsText(raw json.RawMessage) string {
+	d := strings.TrimSpace(string(raw))
+	if d == "" || d == "null" || d == "{}" || d == "[]" {
+		return ""
+	}
+	return truncate(d, 500)
 }
 
 func truncate(s string, n int) string {

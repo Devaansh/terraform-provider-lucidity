@@ -9,7 +9,7 @@ import (
 )
 
 // TestAcceptance_ListTenants is the Phase 1 gated smoke test: one
-// authenticated GET /external/client/api/v1/tenants against a real
+// authenticated GET /v1/tenants against a real
 // Lucidity account. Skipped unless TF_ACC=1, per the project's testing
 // conventions (sandbox/demo accounts are treated as live — this hits real
 // infrastructure, not a mock).
@@ -43,8 +43,8 @@ func TestAcceptance_ListTenants(t *testing.T) {
 	c := NewClient(baseURL, creds)
 
 	var tenants json.RawMessage
-	if err := c.Do(context.Background(), http.MethodGet, "/external/client/api/v1/tenants", nil, &tenants); err != nil {
-		t.Fatalf("GET /external/client/api/v1/tenants: %v", err)
+	if err := c.Do(context.Background(), http.MethodGet, "/v1/tenants", nil, &tenants); err != nil {
+		t.Fatalf("GET /v1/tenants: %v", err)
 	}
 	if len(tenants) == 0 {
 		t.Fatal("expected a non-empty tenants response")

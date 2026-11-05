@@ -31,6 +31,16 @@ _Author: Swapnesh Kumar._
   legacy tenant endpoints accept the new token.
 - A 401 now says which credential type was rejected (refresh token or
   service account), with the causes the token endpoint documents.
+- AWS tenants use the revamped Tenant Linking API: `POST /v1/tenants/aws/onboard`,
+  `PATCH /v1/tenants/aws`, `PUT /v1/tenants/aws/deboard` (account ID at the
+  top level of the body), and `GET /v1/tenants` for listing. Azure/GCP
+  update and deboard stay on the deprecated legacy endpoints until their
+  `/v1` versions exist.
+- Refresh reads a tenant with `GET /v1/tenants/{tenantId}` when `tenant_id`
+  is known, instead of listing every tenant; a 404 removes it from state.
+- Onboard reports missing IAM permissions (revamped 400) as an actionable
+  error, and recognises the revamped "already deboarded" conflict.
+- Error `details` from the enveloped error body are shown.
 - Responses without the `{success,data,error,requestId}` envelope are now
   decoded directly, and flat `{code,message,details}` error bodies are
   parsed (code, message and details shown) instead of reported as

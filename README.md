@@ -428,6 +428,37 @@ normal update on the next `apply`.
   ID, policy, permissions boundary/SCP, account ID, IAM propagation) to work
   through.
 
+### API documentation notes (tenants)
+
+The provider uses Lucidity's revamped Tenant Linking API
+([docs/api/revamp/tenants/tenant-linking-api.pdf](docs/api/revamp/tenants/tenant-linking-api.pdf)):
+
+| Call | AWS | Azure / GCP |
+|---|---|---|
+| List | `GET /v1/tenants` | `GET /v1/tenants` |
+| Read one | `GET /v1/tenants/{tenantId}` | `GET /v1/tenants/{tenantId}` |
+| Onboard | `POST /v1/tenants/aws/onboard` | Not supported (no revamped endpoint yet) |
+| Update | `PATCH /v1/tenants/aws` | Legacy `PATCH /external/client/api/v1/tenants` (deprecated) |
+| Deboard | `PUT /v1/tenants/aws/deboard` | Legacy `PUT /external/client/api/v1/tenants/deboard` (deprecated) |
+
+- **Azure and GCP** stay on the deprecated legacy endpoints until
+  `/v1/tenants/azure` and `/v1/tenants/gcp` exist.
+- **Missing IAM permissions** at onboard now come back as a 400 naming the
+  permissions; the provider shows them and suggests
+  `skip_cloud_permission_check` only for custom permission sets.
+- **Validation errors** include a `details` list (field and message); the
+  provider shows it.
+- **Unknown request fields are ignored** by the API. `aws_org_root_id` isn't
+  in the revamped doc either, so it is still sent but has no documented
+  effect.
+- **The revamped endpoints require `X-Authtype`** (`403 FORBIDDEN` otherwise),
+  which the provider sends.
+- **Reads use get-by-ID** (`GET /v1/tenants/{tenantId}`) once `tenant_id` is
+  in state, instead of listing every tenant. Right after `terraform import`
+  (no `tenant_id` yet) the first read lists and matches on cloud + account.
+  After onboard and update, the provider still lists until the change shows
+  up (up to 150s).
+
 Full test evidence: [docs/qa-testing/account-management.md](docs/qa-testing/account-management.md).
 Full schema reference: [docs/resources/tenant.md](docs/resources/tenant.md), [docs/data-sources/tenants.md](docs/data-sources/tenants.md).
 

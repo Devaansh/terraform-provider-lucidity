@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -629,14 +630,11 @@ func (r *tenantResource) Read(ctx context.Context, req resource.ReadRequest, res
 	cloudProvider := state.CloudEntityInformation.CloudProvider.ValueString()
 	accountID := state.CloudEntityInformation.CloudProviderAccountID.ValueString()
 
-	// No GET-by-ID exists — list and match.
-	tenants, err := r.client.ListTenants(ctx)
+	found, ok, err := r.readTenant(ctx, state.TenantID.ValueString(), cloudProvider, accountID)
 	if err != nil {
-		resp.Diagnostics.AddError("Unable to list Lucidity tenants", err.Error())
+		resp.Diagnostics.AddError("Unable to read Lucidity tenant", err.Error())
 		return
 	}
-
-	found, ok := client.FindTenant(tenants, cloudProvider, accountID)
 	if !ok {
 		resp.Diagnostics.AddWarning(
 			"Lucidity tenant no longer found",
@@ -660,6 +658,30 @@ func (r *tenantResource) Read(ctx context.Context, req resource.ReadRequest, res
 			),
 		)
 	}
+}
+
+// readTenant fetches the tenant by tenantId (GET /v1/tenants/{tenantId}) when
+// state has one, and falls back to listing and matching on cloud provider +
+// account ID when it doesn't (right after import). found=false means it no
+// longer exists under the caller's account.
+func (r *tenantResource) readTenant(ctx context.Context, tenantID, cloudProvider, accountID string) (client.TenantListItem, bool, error) {
+	if tenantID != "" {
+		item, err := r.client.GetTenant(ctx, tenantID)
+		if err != nil {
+			var apiErr *client.APIError
+			if errors.As(err, &apiErr) && apiErr.HTTPStatus == http.StatusNotFound {
+				return client.TenantListItem{}, false, nil
+			}
+			return client.TenantListItem{}, false, err
+		}
+		return *item, true, nil
+	}
+	tenants, err := r.client.ListTenants(ctx)
+	if err != nil {
+		return client.TenantListItem{}, false, err
+	}
+	item, ok := client.FindTenant(tenants, cloudProvider, accountID)
+	return item, ok, nil
 }
 
 func (r *tenantResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -918,7 +940,9 @@ func handleOnboardError(diags *diag.Diagnostics, err error, accountID string) {
 			// Defense-in-depth backstop for the race window between the
 			// pre-check above and this call — same two variants, now coming
 			// straight from the API instead of our own list-and-match.
-			if strings.Contains(strings.ToLower(apiErr.Message), "inactive") {
+			// Legacy: "...deboarded (INACTIVE) tenant exists..."; revamped:
+			// "An already deboarded tenant exists...".
+			if msg := strings.ToLower(apiErr.Message); strings.Contains(msg, "inactive") || strings.Contains(msg, "deboarded") {
 				diags.AddError(
 					"Cloud account was previously deboarded",
 					fmt.Sprintf(
@@ -937,6 +961,20 @@ func handleOnboardError(diags *diag.Diagnostics, err error, accountID string) {
 				),
 			)
 			return
+		case "INVALID_REQUEST":
+			// Revamped onboard: the IAM role lacks permissions Lucidity needs
+			// (only checked when skip_cloud_permission_check is false).
+			if strings.Contains(strings.ToLower(apiErr.Message), "missing cloud permissions") {
+				diags.AddError(
+					"IAM role is missing permissions Lucidity needs",
+					fmt.Sprintf(
+						"Lucidity checked the IAM role for cloud account %s and found permissions missing (requestId=%s): %s. "+
+							"Add them to the policy named in aws_iam_policy_name and re-apply. If you deliberately use a custom permission set, set skip_cloud_permission_check = true.",
+						accountID, apiErr.RequestID, apiErr.Message,
+					),
+				)
+				return
+			}
 		case "UNAUTHORIZED":
 			if strings.Contains(strings.ToLower(apiErr.Message), "cloud account could not be validated") {
 				diags.AddError(
