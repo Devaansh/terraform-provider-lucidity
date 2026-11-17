@@ -22,9 +22,10 @@ import (
 )
 
 var (
-	_ resource.Resource                = &scalingPolicyResource{}
-	_ resource.ResourceWithConfigure   = &scalingPolicyResource{}
-	_ resource.ResourceWithImportState = &scalingPolicyResource{}
+	_ resource.Resource                   = &scalingPolicyResource{}
+	_ resource.ResourceWithConfigure      = &scalingPolicyResource{}
+	_ resource.ResourceWithImportState    = &scalingPolicyResource{}
+	_ resource.ResourceWithValidateConfig = &scalingPolicyResource{}
 )
 
 func newScalingPolicyResource() resource.Resource {
@@ -119,6 +120,31 @@ func (r *scalingPolicyResource) Schema(_ context.Context, _ resource.SchemaReque
 				Description: "How many instances the policy is attached to. Lucidity reports only the count, not which instances.",
 			},
 		},
+	}
+}
+
+// ValidateConfig fails at plan time when a minimum is above its maximum,
+// instead of leaving it to the API. The API docs don't state these ranges,
+// so this is only the obvious check: equal values are allowed.
+func (r *scalingPolicyResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var cfg scalingPolicyResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	checkMinNotAboveMax(&resp.Diagnostics, "min_buffer_in_gb", cfg.MinBufferInGb, "max_buffer_in_gb", cfg.MaxBufferInGb)
+	checkMinNotAboveMax(&resp.Diagnostics, "min_disk_sku_size", cfg.MinDiskSkuSize, "max_disk_sku_size", cfg.MaxDiskSkuSize)
+}
+
+// checkMinNotAboveMax skips values not known yet (e.g. from a variable
+// computed at apply time); Terraform validates again once they are.
+func checkMinNotAboveMax(diags *diag.Diagnostics, minName string, minVal types.Int64, maxName string, maxVal types.Int64) {
+	if minVal.IsNull() || minVal.IsUnknown() || maxVal.IsNull() || maxVal.IsUnknown() {
+		return
+	}
+	if minVal.ValueInt64() > maxVal.ValueInt64() {
+		diags.AddAttributeError(path.Root(minName), fmt.Sprintf("%s is greater than %s", minName, maxName),
+			fmt.Sprintf("%s (%d) must not be greater than %s (%d).", minName, minVal.ValueInt64(), maxName, maxVal.ValueInt64()))
 	}
 }
 

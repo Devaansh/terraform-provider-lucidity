@@ -17,7 +17,7 @@ Attaches a lucidity_scaling_policy to one instance. Destroying it detaches the p
 resource "lucidity_scaling_policy_attachment" "orders_db" {
   policy_id = lucidity_scaling_policy.db.id
 
-  instance_identifier {
+  instance_identifier = {
     cloud_provider            = "AWS"
     cloud_provider_account_id = "123456789012"
     instance_id               = "i-0abc123def4567890"
@@ -28,7 +28,7 @@ resource "lucidity_scaling_policy_attachment" "orders_db" {
 resource "lucidity_scaling_policy_attachment" "azure_vm" {
   policy_id = lucidity_scaling_policy.db.id
 
-  instance_identifier {
+  instance_identifier = {
     cloud_provider            = "AZURE"
     cloud_provider_account_id = "8f2d1c3a-5b6e-4f70-9a81-2c3d4e5f6a7b"
     resource_group            = "prod-rg"
@@ -42,17 +42,14 @@ resource "lucidity_scaling_policy_attachment" "azure_vm" {
 
 ### Required
 
+- `instance_identifier` (Attributes) The instance to attach the policy to. (see [below for nested schema](#nestedatt--instance_identifier))
 - `policy_id` (String) ID of the scaling policy to attach (lucidity_scaling_policy.<name>.id).
-
-### Optional
-
-- `instance_identifier` (Block, Optional) The instance to attach the policy to. Required. (see [below for nested schema](#nestedblock--instance_identifier))
 
 ### Read-Only
 
 - `id` (String) "<policy_id>/<cloud_provider>/<cloud_provider_account_id>/<instance_id>" (with "/<resource_group>" before the instance ID for Azure). Also the import ID.
 
-<a id="nestedblock--instance_identifier"></a>
+<a id="nestedatt--instance_identifier"></a>
 ### Nested Schema for `instance_identifier`
 
 Required:

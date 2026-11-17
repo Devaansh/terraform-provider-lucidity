@@ -334,6 +334,55 @@ func TestScalingPolicyRPC_Validation(t *testing.T) {
 	}
 }
 
+// A minimum above its maximum fails at plan time; equal values and values
+// not known yet pass.
+func TestScalingPolicyRPC_MinNotAboveMax(t *testing.T) {
+	unknown := tftypes.NewValue(tftypes.Number, tftypes.UnknownValue)
+	cases := []struct {
+		name    string
+		set     map[string]tftypes.Value
+		wantErr string
+	}{
+		{"buffer min above max", map[string]tftypes.Value{"min_buffer_in_gb": numVal(500), "max_buffer_in_gb": numVal(300)}, "min_buffer_in_gb is greater than max_buffer_in_gb"},
+		{"disk sku min above max", map[string]tftypes.Value{"min_disk_sku_size": numVal(128), "max_disk_sku_size": numVal(64)}, "min_disk_sku_size is greater than max_disk_sku_size"},
+		{"equal values", map[string]tftypes.Value{"min_buffer_in_gb": numVal(300), "max_buffer_in_gb": numVal(300), "min_disk_sku_size": numVal(64), "max_disk_sku_size": numVal(64)}, ""},
+		{"max unknown", map[string]tftypes.Value{"min_buffer_in_gb": numVal(500), "max_buffer_in_gb": unknown}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := validateResource(t, "lucidity_scaling_policy", policyType(), policyValue(tc.set))
+			if tc.wantErr == "" {
+				if hasErrorDiagnostic(d) {
+					t.Fatalf("unexpected error: %+v", d)
+				}
+				return
+			}
+			if !hasErrorDiagnostic(d) || !strings.Contains(d[0].Summary, tc.wantErr) {
+				t.Fatalf("want %q, got %+v", tc.wantErr, d)
+			}
+		})
+	}
+}
+
+// instance_identifier is a nested attribute: a whole object not known until
+// apply must not fail validation.
+func TestScalingPolicyAttachmentRPC_UnknownInstanceIdentifier(t *testing.T) {
+	v := tftypes.NewValue(attachmentType(), map[string]tftypes.Value{
+		"id": tftypes.NewValue(tftypes.String, nil), "policy_id": strVal("33"),
+		"instance_identifier": tftypes.NewValue(instanceIdentifierObjType(), tftypes.UnknownValue),
+	})
+	if d := validateResource(t, "lucidity_scaling_policy_attachment", attachmentType(), v); hasErrorDiagnostic(d) {
+		t.Fatalf("unknown instance_identifier rejected: %+v", d)
+	}
+	null := tftypes.NewValue(attachmentType(), map[string]tftypes.Value{
+		"id": tftypes.NewValue(tftypes.String, nil), "policy_id": strVal("33"),
+		"instance_identifier": tftypes.NewValue(instanceIdentifierObjType(), nil),
+	})
+	if d := validateResource(t, "lucidity_scaling_policy_attachment", attachmentType(), null); !hasErrorDiagnostic(d) {
+		t.Fatal("missing instance_identifier must be rejected")
+	}
+}
+
 func TestScalingPolicyRPC_RegistersResourcesAndDataSource(t *testing.T) {
 	resp, err := newTestProviderServer(t).GetProviderSchema(context.Background(), &tfprotov6.GetProviderSchemaRequest{})
 	if err != nil {

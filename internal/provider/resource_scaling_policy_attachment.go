@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/hashicorp/terraform-plugin-framework-validators/objectvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -17,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 
 	"github.com/Devaansh/terraform-provider-lucidity/internal/client"
 )
@@ -86,11 +86,9 @@ func (r *scalingPolicyAttachmentResource) Schema(_ context.Context, _ resource.S
 				Description:   "ID of the scaling policy to attach (lucidity_scaling_policy.<name>.id).",
 				PlanModifiers: replace,
 			},
-		},
-		Blocks: map[string]schema.Block{
-			"instance_identifier": schema.SingleNestedBlock{
-				Description: "The instance to attach the policy to. Required.",
-				Validators:  []validator.Object{objectvalidator.IsRequired()},
+			"instance_identifier": schema.SingleNestedAttribute{
+				Required:    true,
+				Description: "The instance to attach the policy to.",
 				Attributes: map[string]schema.Attribute{
 					"cloud_provider": schema.StringAttribute{
 						Required:      true,
@@ -120,18 +118,29 @@ func (r *scalingPolicyAttachmentResource) Schema(_ context.Context, _ resource.S
 }
 
 func (r *scalingPolicyAttachmentResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
-	var cfg scalingPolicyAttachmentModel
-	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	if !cfg.PolicyID.IsUnknown() && !cfg.PolicyID.IsNull() {
-		if _, err := parsePolicyID(cfg.PolicyID.ValueString()); err != nil {
+	var policyID types.String
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("policy_id"), &policyID)...)
+	if !policyID.IsUnknown() && !policyID.IsNull() {
+		if _, err := parsePolicyID(policyID.ValueString()); err != nil {
 			resp.Diagnostics.AddAttributeError(path.Root("policy_id"), "Invalid policy_id", err.Error())
 		}
 	}
-	id := cfg.InstanceIdentifier
-	if id == nil || id.CloudProvider.IsUnknown() || id.CloudProvider.IsNull() {
+
+	// instance_identifier is an attribute, so the whole object can be
+	// unknown at validate time (e.g. built from another resource's output).
+	// Read it as an Object first and skip the checks until it's known.
+	var obj types.Object
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("instance_identifier"), &obj)...)
+	if resp.Diagnostics.HasError() || obj.IsNull() || obj.IsUnknown() {
+		return
+	}
+	var inst policyInstanceModel
+	resp.Diagnostics.Append(obj.As(ctx, &inst, basetypes.ObjectAsOptions{})...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	id := &inst
+	if id.CloudProvider.IsUnknown() || id.CloudProvider.IsNull() {
 		return
 	}
 	rg := path.Root("instance_identifier").AtName("resource_group")
@@ -304,7 +313,7 @@ func handleAttachError(diags *diag.Diagnostics, err error, action string, policy
 			return
 		case http.StatusForbidden:
 			diags.AddError("Scaling policy belongs to another account",
-				fmt.Sprintf("Couldn't %s scaling policy %d: Lucidity says it belongs to another account, or the X-Authtype header is unsupported (%s).", action, policyID, apiErr.Error()))
+				fmt.Sprintf("Couldn't %s scaling policy %d: Lucidity says it belongs to another account (%s).", action, policyID, apiErr.Error()))
 			return
 		}
 	}

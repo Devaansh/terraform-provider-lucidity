@@ -20,9 +20,12 @@ _Author: Swapnesh Kumar._
   types set only in the environment is an error.
 - `lucidity_scaling_policy` resource (create, read, update, delete, import)
   on the revamped `/autoscaler/v1/scaling-policies` API; drift is detected
-  on every setting.
+  on every setting. A minimum above its maximum (`min_buffer_in_gb` /
+  `max_buffer_in_gb`, `min_disk_sku_size` / `max_disk_sku_size`) fails at
+  plan time.
 - `lucidity_scaling_policy_attachment` resource: attaches a policy to one
-  instance (AWS, Azure, GCP); destroy detaches. Each refresh checks the
+  instance (AWS, Azure, GCP), given as `instance_identifier = { ... }`;
+  destroy detaches. Each refresh checks the
   instance's actual policy via `POST /autoscaler/v1/instances`, so a detach
   or policy change made outside Terraform is detected and re-attached on
   the next apply, and imports are verified.

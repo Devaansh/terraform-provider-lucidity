@@ -499,7 +499,7 @@ resource "lucidity_scaling_policy" "db" {
 
 resource "lucidity_scaling_policy_attachment" "orders_db" {
   policy_id = lucidity_scaling_policy.db.id
-  instance_identifier {
+  instance_identifier = {
     cloud_provider            = "AWS"
     cloud_provider_account_id = "123456789012"
     instance_id               = "i-0abc123def4567890"
