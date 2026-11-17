@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/luciditycloud/terraform-provider-lucidity/internal/client"
+	"github.com/Devaansh/terraform-provider-lucidity/internal/client"
 )
 
 // clearCredentialEnv makes sure no credential env var leaks in from the

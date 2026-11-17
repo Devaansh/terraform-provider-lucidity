@@ -16,7 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
-	"github.com/luciditycloud/terraform-provider-lucidity/internal/client"
+	"github.com/Devaansh/terraform-provider-lucidity/internal/client"
 )
 
 // mockPolicyServer is a stateful stand-in for the Scaling Policies API. Like

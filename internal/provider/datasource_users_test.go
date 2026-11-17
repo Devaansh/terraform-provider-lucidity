@@ -11,7 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
-	"github.com/luciditycloud/terraform-provider-lucidity/internal/client"
+	"github.com/Devaansh/terraform-provider-lucidity/internal/client"
 )
 
 func newUsersTestClient(t *testing.T) *client.Client {

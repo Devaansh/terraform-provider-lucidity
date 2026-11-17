@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/luciditycloud/terraform-provider-lucidity/internal/client"
+	"github.com/Devaansh/terraform-provider-lucidity/internal/client"
 )
 
 const (
