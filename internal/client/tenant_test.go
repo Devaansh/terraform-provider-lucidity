@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,13 +15,13 @@ import (
 
 func newTenantTestClient(t *testing.T, mux *http.ServeMux) (*Client, *httptest.Server) {
 	t.Helper()
-	mux.HandleFunc(refreshEndpoint, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(tokenEndpoint, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(refreshResponseBody{AccessToken: "access-token"})
+		writeTokenResponse(w, "access-token")
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	c := NewClient(srv.URL, "refresh-secret", WithHTTPClient(srv.Client()), withRetryBaseDelay(time.Millisecond))
+	c := NewClient(srv.URL, Credentials{RefreshToken: "refresh-secret"}, WithHTTPClient(srv.Client()), withRetryBaseDelay(time.Millisecond))
 	return c, srv
 }
 
@@ -37,16 +38,19 @@ func writeEnvelope(w http.ResponseWriter, status int, success bool, data any, ap
 
 func TestOnboardTenant_Success(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc(tenantsOnboardPath, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(tenantsAWSOnboardPath, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("got method %s, want POST", r.Method)
 		}
-		var req OnboardTenantRequest
+		var req struct {
+			CloudEntityInformation map[string]any `json:"cloudEntityInformation"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decoding request: %v", err)
 		}
-		if req.CloudEntityInformation.CloudProvider != "AWS" {
-			t.Fatalf("got cloudProvider %q, want AWS", req.CloudEntityInformation.CloudProvider)
+		cei := req.CloudEntityInformation
+		if _, ok := cei["cloudProvider"]; ok || cei["cloudProviderAccountId"] != "123456789012" || cei["externalId"] != "ext-id" || cei["awsIAMRoleName"] != "LucidityRole" {
+			t.Fatalf("got cloudEntityInformation %v, want the AWS fields and no cloudProvider (it's in the path)", cei)
 		}
 		writeEnvelope(w, http.StatusCreated, true, OnboardedTenant{
 			TenantID:               "acme_123456789012",
@@ -80,7 +84,7 @@ func TestOnboardTenant_Success(t *testing.T) {
 
 func TestOnboardTenant_ConflictActiveDuplicate(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc(tenantsOnboardPath, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(tenantsAWSOnboardPath, func(w http.ResponseWriter, r *http.Request) {
 		writeEnvelope(w, http.StatusConflict, false, nil, &envelopeError{
 			Code:    "CONFLICT",
 			Message: "A tenant already exists for cloudProviderAccountId '123456789012'.",
@@ -88,7 +92,7 @@ func TestOnboardTenant_ConflictActiveDuplicate(t *testing.T) {
 	})
 	c, _ := newTenantTestClient(t, mux)
 
-	_, err := c.OnboardTenant(context.Background(), OnboardTenantRequest{})
+	_, err := c.OnboardTenant(context.Background(), awsOnboard())
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
 		t.Fatalf("got error %v (%T), want *APIError", err, err)
@@ -100,7 +104,7 @@ func TestOnboardTenant_ConflictActiveDuplicate(t *testing.T) {
 
 func TestOnboardTenant_ConflictInactive(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc(tenantsOnboardPath, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(tenantsAWSOnboardPath, func(w http.ResponseWriter, r *http.Request) {
 		writeEnvelope(w, http.StatusConflict, false, nil, &envelopeError{
 			Code:    "CONFLICT",
 			Message: "An already deboarded (INACTIVE) tenant exists for cloudProviderAccountId '123456789012'; re-onboarding support does not exist right now.",
@@ -108,7 +112,7 @@ func TestOnboardTenant_ConflictInactive(t *testing.T) {
 	})
 	c, _ := newTenantTestClient(t, mux)
 
-	_, err := c.OnboardTenant(context.Background(), OnboardTenantRequest{})
+	_, err := c.OnboardTenant(context.Background(), awsOnboard())
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
 		t.Fatalf("got error %v (%T), want *APIError", err, err)
@@ -120,7 +124,7 @@ func TestOnboardTenant_ConflictInactive(t *testing.T) {
 
 func TestOnboardTenant_CloudAccountValidationFailure(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc(tenantsOnboardPath, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(tenantsAWSOnboardPath, func(w http.ResponseWriter, r *http.Request) {
 		writeEnvelope(w, http.StatusUnauthorized, false, nil, &envelopeError{
 			Code:    "UNAUTHORIZED",
 			Message: "Authentication failed: the cloud account could not be validated.",
@@ -128,7 +132,7 @@ func TestOnboardTenant_CloudAccountValidationFailure(t *testing.T) {
 	})
 	c, _ := newTenantTestClient(t, mux)
 
-	_, err := c.OnboardTenant(context.Background(), OnboardTenantRequest{})
+	_, err := c.OnboardTenant(context.Background(), awsOnboard())
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
 		t.Fatalf("got error %v (%T), want *APIError (not AuthError)", err, err)
@@ -171,7 +175,7 @@ func TestListTenants_Success(t *testing.T) {
 
 func TestUpdateTenant_NotFound(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc(tenantsPath, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(tenantsAWSUpdatePath, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPatch {
 			t.Fatalf("got method %s, want PATCH", r.Method)
 		}
@@ -194,7 +198,7 @@ func TestUpdateTenant_NotFound(t *testing.T) {
 
 func TestUpdateTenant_ConflictNotActive(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc(tenantsPath, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(tenantsAWSUpdatePath, func(w http.ResponseWriter, r *http.Request) {
 		writeEnvelope(w, http.StatusConflict, false, nil, &envelopeError{
 			Code:    "CONFLICT",
 			Message: "Tenant for cloudProviderAccountId '111' is not ACTIVE; cannot update.",
@@ -215,7 +219,7 @@ func TestUpdateTenant_ConflictNotActive(t *testing.T) {
 func TestDeboardTenant_DeBoardedAndIdempotent(t *testing.T) {
 	var calls int
 	mux := http.NewServeMux()
-	mux.HandleFunc(tenantsDeboardPath, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(tenantsAWSDeboardPath, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut {
 			t.Fatalf("got method %s, want PUT", r.Method)
 		}
@@ -251,7 +255,7 @@ func TestDeboardTenant_DeBoardedAndIdempotent(t *testing.T) {
 
 func TestDeboardTenant_NotFound(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc(tenantsDeboardPath, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(tenantsAWSDeboardPath, func(w http.ResponseWriter, r *http.Request) {
 		writeEnvelope(w, http.StatusNotFound, false, nil, &envelopeError{
 			Code:    "NOT_FOUND",
 			Message: "No tenant exists for cloudProviderAccountId '999'; nothing to deboard.",
@@ -269,13 +273,13 @@ func TestDeboardTenant_NotFound(t *testing.T) {
 func TestOnboardTenant_DoesNotRetry5xx(t *testing.T) {
 	var posts int32
 	mux := http.NewServeMux()
-	mux.HandleFunc(tenantsOnboardPath, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(tenantsAWSOnboardPath, func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&posts, 1)
 		writeEnvelope(w, http.StatusInternalServerError, false, nil, &envelopeError{Code: "INTERNAL_ERROR", Message: "boom"}, "req-500")
 	})
 	c, _ := newTenantTestClient(t, mux)
 
-	_, err := c.OnboardTenant(context.Background(), OnboardTenantRequest{})
+	_, err := c.OnboardTenant(context.Background(), awsOnboard())
 	if err == nil {
 		t.Fatal("expected an error, got nil")
 	}
@@ -290,7 +294,7 @@ func TestOnboardTenant_DoesNotRetry5xx(t *testing.T) {
 func TestOnboardTenant_StillRetries401AfterRefresh(t *testing.T) {
 	var posts int32
 	mux := http.NewServeMux()
-	mux.HandleFunc(tenantsOnboardPath, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(tenantsAWSOnboardPath, func(w http.ResponseWriter, r *http.Request) {
 		if atomic.AddInt32(&posts, 1) == 1 {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -299,7 +303,7 @@ func TestOnboardTenant_StillRetries401AfterRefresh(t *testing.T) {
 	})
 	c, _ := newTenantTestClient(t, mux)
 
-	if _, err := c.OnboardTenant(context.Background(), OnboardTenantRequest{}); err != nil {
+	if _, err := c.OnboardTenant(context.Background(), awsOnboard()); err != nil {
 		t.Fatalf("OnboardTenant: %v", err)
 	}
 	if got := atomic.LoadInt32(&posts); got != 2 {
@@ -338,7 +342,7 @@ func TestIsOutcomeUnknown(t *testing.T) {
 
 func TestOnboardTenant_ConnectionDropIsOutcomeUnknown(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc(tenantsOnboardPath, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(tenantsAWSOnboardPath, func(w http.ResponseWriter, r *http.Request) {
 		// Hijack and close without writing a response: the request was
 		// received but the client never learns the outcome.
 		conn, _, _ := w.(http.Hijacker).Hijack()
@@ -346,7 +350,7 @@ func TestOnboardTenant_ConnectionDropIsOutcomeUnknown(t *testing.T) {
 	})
 	c, _ := newTenantTestClient(t, mux)
 
-	_, err := c.OnboardTenant(context.Background(), OnboardTenantRequest{})
+	_, err := c.OnboardTenant(context.Background(), awsOnboard())
 	if err == nil {
 		t.Fatal("expected an error, got nil")
 	}
@@ -390,7 +394,7 @@ func TestListTenants_ExternalIDPresence(t *testing.T) {
 
 func TestUpdateTenant_SendsExternalID(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc(tenantsPath, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(tenantsAWSUpdatePath, func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		if got := body["cloudEntityInformation"]["externalId"]; got != "new-ext" {
@@ -446,5 +450,105 @@ func TestListTenants_TotalCountGuard(t *testing.T) {
 				t.Fatalf("expected both tenants and no error, got %v / %v", got, err)
 			}
 		})
+	}
+}
+
+func awsOnboard() OnboardTenantRequest {
+	return OnboardTenantRequest{CloudEntityInformation: CloudEntityInformation{CloudProvider: "AWS"}}
+}
+
+// The revamped deboard takes the account ID at the top level; a
+// cloudEntityInformation wrapper would be ignored and fail validation.
+func TestDeboardTenant_AWSBodyIsTopLevel(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc(tenantsAWSDeboardPath, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if len(body) != 1 || body["cloudProviderAccountId"] != "111" {
+			t.Fatalf("got body %v, want only a top-level cloudProviderAccountId", body)
+		}
+		writeEnvelope(w, http.StatusOK, true, DeboardResult{CloudProviderAccountID: "111", Status: DeboardStatusDeBoarded}, nil, "r")
+	})
+	c, _ := newTenantTestClient(t, mux)
+	if _, err := c.DeboardTenant(context.Background(), "AWS", "111"); err != nil {
+		t.Fatalf("DeboardTenant: %v", err)
+	}
+}
+
+// An AWS update sends only what changes, without cloudProvider.
+func TestUpdateTenant_AWSBody(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc(tenantsAWSUpdatePath, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		cei, _ := body["cloudEntityInformation"].(map[string]any)
+		if len(body) != 2 || body["displayName"] != "renamed" || len(cei) != 1 || cei["cloudProviderAccountId"] != "111" {
+			t.Fatalf("got body %v, want displayName and only cloudProviderAccountId", body)
+		}
+		writeEnvelope(w, http.StatusOK, true, UpdatedTenant{TenantID: "t"}, nil, "r")
+	})
+	c, _ := newTenantTestClient(t, mux)
+	if _, err := c.UpdateTenant(context.Background(), UpdateTenantRequest{
+		CloudEntityInformation: CloudEntityInformation{CloudProvider: "AWS", CloudProviderAccountID: "111"},
+		DisplayName:            "renamed",
+	}); err != nil {
+		t.Fatalf("UpdateTenant: %v", err)
+	}
+}
+
+// Only AWS is supported by the tenant API (legacy and revamped alike);
+// other clouds fail before any request is sent.
+func TestTenantCalls_NonAWSRejectedWithoutRequest(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("no request expected for a non-AWS tenant, got %s %s", r.Method, r.URL.Path)
+	})
+	c, _ := newTenantTestClient(t, mux)
+	ctx := context.Background()
+	if _, err := c.OnboardTenant(ctx, OnboardTenantRequest{CloudEntityInformation: CloudEntityInformation{CloudProvider: "AZURE", CloudProviderAccountID: "sub-1"}}); err == nil {
+		t.Fatal("OnboardTenant: expected an error for AZURE")
+	}
+	if _, err := c.UpdateTenant(ctx, UpdateTenantRequest{CloudEntityInformation: CloudEntityInformation{CloudProvider: "GCP", CloudProviderAccountID: "p-1"}, DisplayName: "x"}); err == nil {
+		t.Fatal("UpdateTenant: expected an error for GCP")
+	}
+	if _, err := c.DeboardTenant(ctx, "AZURE", "sub-1"); err == nil {
+		t.Fatal("DeboardTenant: expected an error for AZURE")
+	}
+}
+
+// VALIDATION_ERROR carries a details list; it must reach the user.
+func TestParseErrorBody_EnvelopeDetails(t *testing.T) {
+	err := parseErrorBody(http.StatusBadRequest, []byte(`{"success":false,"error":{"code":"VALIDATION_ERROR","message":"Request validation failed","details":[{"field":"cloudProviderAccountId","message":"must not be blank"}]},"requestId":"r"}`))
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Code != "VALIDATION_ERROR" || !strings.Contains(apiErr.Error(), "must not be blank") {
+		t.Fatalf("got %v, want VALIDATION_ERROR with details shown", err)
+	}
+}
+
+func TestGetTenant(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc(tenantsPath+"/acme_123456789012", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("got method %s, want GET", r.Method)
+		}
+		writeEnvelope(w, http.StatusOK, true, map[string]any{
+			"tenantId": "acme_123456789012", "cloudProvider": "AWS", "cloudEntityName": "1234567899876",
+			"cloudProviderAccountId": "123456789012", "displayName": "Acme Prod", "status": "ACTIVE",
+			"externalId": "b2f471dd-2363-4b9a-a421-98ba93162451",
+		}, nil, "r")
+	})
+	mux.HandleFunc(tenantsPath+"/missing", func(w http.ResponseWriter, r *http.Request) {
+		writeEnvelope(w, http.StatusNotFound, false, nil, &envelopeError{Code: "NOT_FOUND", Message: "not found"}, "r")
+	})
+	c, _ := newTenantTestClient(t, mux)
+
+	got, err := c.GetTenant(context.Background(), "acme_123456789012")
+	if err != nil || got.DisplayName != "Acme Prod" || got.ExternalID == nil || !got.ExternalIDReported {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+	_, err = c.GetTenant(context.Background(), "missing")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.HTTPStatus != http.StatusNotFound {
+		t.Fatalf("got %v, want a 404 *APIError", err)
 	}
 }

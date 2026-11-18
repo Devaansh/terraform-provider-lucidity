@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -21,10 +22,10 @@ type protectedResult struct {
 func newMockServer(t *testing.T, refreshTokenCalls *int32, protectedHandler http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.HandleFunc(refreshEndpoint, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(tokenEndpoint, func(w http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt32(refreshTokenCalls, 1)
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(refreshResponseBody{AccessToken: fmt.Sprintf("access-token-%d", n)})
+		writeTokenResponse(w, fmt.Sprintf("access-token-%d", n))
 	})
 	mux.HandleFunc(protectedPath, protectedHandler)
 	return httptest.NewServer(mux)
@@ -47,7 +48,7 @@ func TestClient_401RetrySucceedsAfterForcedRefresh(t *testing.T) {
 	})
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "refresh-secret", WithHTTPClient(srv.Client()), withRetryBaseDelay(time.Millisecond))
+	c := NewClient(srv.URL, Credentials{RefreshToken: "refresh-secret"}, WithHTTPClient(srv.Client()), withRetryBaseDelay(time.Millisecond))
 
 	var out protectedResult
 	if err := c.Do(context.Background(), http.MethodGet, protectedPath, nil, &out); err != nil {
@@ -71,7 +72,7 @@ func TestClient_401RetryStillFails(t *testing.T) {
 	})
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "refresh-secret", WithHTTPClient(srv.Client()), withRetryBaseDelay(time.Millisecond))
+	c := NewClient(srv.URL, Credentials{RefreshToken: "refresh-secret"}, WithHTTPClient(srv.Client()), withRetryBaseDelay(time.Millisecond))
 
 	err := c.Do(context.Background(), http.MethodGet, protectedPath, nil, nil)
 	if err == nil {
@@ -103,7 +104,7 @@ func TestClient_401CloudAccountValidationFailureSurfacesRealMessage(t *testing.T
 	})
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "refresh-secret", WithHTTPClient(srv.Client()), withRetryBaseDelay(time.Millisecond))
+	c := NewClient(srv.URL, Credentials{RefreshToken: "refresh-secret"}, WithHTTPClient(srv.Client()), withRetryBaseDelay(time.Millisecond))
 
 	err := c.Do(context.Background(), http.MethodPost, protectedPath, nil, nil)
 	if err == nil {
@@ -149,7 +150,7 @@ func TestClient_401OnFinalRetryAttemptStillRetriesWithFreshToken(t *testing.T) {
 	})
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "refresh-secret", WithHTTPClient(srv.Client()), withRetryBaseDelay(time.Millisecond))
+	c := NewClient(srv.URL, Credentials{RefreshToken: "refresh-secret"}, WithHTTPClient(srv.Client()), withRetryBaseDelay(time.Millisecond))
 
 	var out protectedResult
 	if err := c.Do(context.Background(), http.MethodGet, protectedPath, nil, &out); err != nil {
@@ -176,7 +177,7 @@ func TestClient_RetriesOn5xxNotOn4xx(t *testing.T) {
 	})
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "refresh-secret", WithHTTPClient(srv.Client()), withRetryBaseDelay(time.Millisecond))
+	c := NewClient(srv.URL, Credentials{RefreshToken: "refresh-secret"}, WithHTTPClient(srv.Client()), withRetryBaseDelay(time.Millisecond))
 	var out protectedResult
 	if err := c.Do(context.Background(), http.MethodGet, protectedPath, nil, &out); err != nil {
 		t.Fatalf("Do: %v", err)
@@ -193,7 +194,7 @@ func TestClient_RetriesOn5xxNotOn4xx(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(envelope{Success: false, Error: &envelopeError{Code: "INVALID_REQUEST", Message: "bad field"}})
 	})
 	defer srv2.Close()
-	c2 := NewClient(srv2.URL, "refresh-secret", WithHTTPClient(srv2.Client()), withRetryBaseDelay(time.Millisecond))
+	c2 := NewClient(srv2.URL, Credentials{RefreshToken: "refresh-secret"}, WithHTTPClient(srv2.Client()), withRetryBaseDelay(time.Millisecond))
 	err := c2.Do(context.Background(), http.MethodGet, protectedPath, nil, nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -223,7 +224,7 @@ func TestNoSecretLeaksInDebugLog(t *testing.T) {
 	})
 	defer srv.Close()
 
-	c := NewClient(srv.URL, refreshSecret, WithHTTPClient(srv.Client()), withRetryBaseDelay(time.Millisecond))
+	c := NewClient(srv.URL, Credentials{RefreshToken: refreshSecret}, WithHTTPClient(srv.Client()), withRetryBaseDelay(time.Millisecond))
 
 	var captured strings.Builder
 	c.DebugLog = func(_ context.Context, msg string, fields map[string]any) {
@@ -279,7 +280,7 @@ func TestClient_DoRespectsContextCancellationWhileWaitingForSemaphore(t *testing
 	})
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "refresh-secret", WithHTTPClient(srv.Client()), withRetryBaseDelay(time.Millisecond), WithMaxParallelRequests(1))
+	c := NewClient(srv.URL, Credentials{RefreshToken: "refresh-secret"}, WithHTTPClient(srv.Client()), withRetryBaseDelay(time.Millisecond), WithMaxParallelRequests(1))
 
 	firstDone := make(chan error, 1)
 	go func() {
@@ -302,5 +303,72 @@ func TestClient_DoRespectsContextCancellationWhileWaitingForSemaphore(t *testing
 
 	if err := <-firstDone; err != nil {
 		t.Fatalf("first Do call: %v", err)
+	}
+}
+
+// The refresh endpoint (and the temporary buffer endpoints) document a flat
+// error body; its code must be recognized instead of falling back to UNKNOWN.
+func TestParseErrorBody_FlatShape(t *testing.T) {
+	err := parseErrorBody(http.StatusBadRequest, []byte(`{"code":"INVALID_REQUEST","message":"refreshToken is required","details":null}`))
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Code != "INVALID_REQUEST" || apiErr.Message != "refreshToken is required" || apiErr.Details != "" {
+		t.Fatalf("got %+v, want INVALID_REQUEST with no details", err)
+	}
+
+	err = parseErrorBody(http.StatusConflict, []byte(`{"code":"CONFLICT","message":"busy","details":{"id":"x-1"}}`))
+	if !errors.As(err, &apiErr) || !strings.Contains(apiErr.Error(), "x-1") {
+		t.Fatalf("got %v, want details shown in the error", err)
+	}
+}
+
+// A body without the envelope's "success" key is decoded directly; an
+// enveloped body still decodes its "data".
+func TestDecodeEnvelope_BareAndWrapped(t *testing.T) {
+	var out struct {
+		ID string `json:"id"`
+	}
+	if err := decodeEnvelope([]byte(`{"id":"bare"}`), &out); err != nil || out.ID != "bare" {
+		t.Fatalf("bare: got %+v, %v", out, err)
+	}
+	out.ID = ""
+	if err := decodeEnvelope([]byte(`{"success":true,"data":{"id":"wrapped"},"error":null,"requestId":"r"}`), &out); err != nil || out.ID != "wrapped" {
+		t.Fatalf("wrapped: got %+v, %v", out, err)
+	}
+}
+
+// Every API call carries the access token as a Bearer token, plus the
+// legacy X-Authtype header until it's confirmed unnecessary.
+func TestClient_SendsBearerAndLegacyAuthType(t *testing.T) {
+	var refreshCalls int32
+	var gotAuth, gotType string
+	srv := newMockServer(t, &refreshCalls, func(w http.ResponseWriter, r *http.Request) {
+		gotAuth, gotType = r.Header.Get("Authorization"), r.Header.Get("X-Authtype")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(envelope{Success: true, Data: json.RawMessage(`{"foo":"bar"}`)})
+	})
+	defer srv.Close()
+
+	c := NewClient(srv.URL, Credentials{ClientID: "svc-1", ClientSecret: "s"}, WithHTTPClient(srv.Client()), withRetryBaseDelay(time.Millisecond))
+	if err := c.Do(context.Background(), http.MethodGet, protectedPath, nil, nil); err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	if gotAuth != "Bearer access-token-1" || gotType != "lucidity_access_token" {
+		t.Fatalf("got Authorization %q X-Authtype %q, want Bearer access-token-1 and lucidity_access_token", gotAuth, gotType)
+	}
+}
+
+// After the forced refresh, a second 401 for a service account reports the
+// service account message, not the refresh-token one.
+func TestClient_401AfterRetryNamesServiceAccount(t *testing.T) {
+	var refreshCalls int32
+	srv := newMockServer(t, &refreshCalls, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	defer srv.Close()
+
+	c := NewClient(srv.URL, Credentials{ClientID: "svc-1", ClientSecret: "s"}, WithHTTPClient(srv.Client()), withRetryBaseDelay(time.Millisecond))
+	err := c.Do(context.Background(), http.MethodGet, protectedPath, nil, nil)
+	if err == nil || err.Error() != ServiceAccountAuthFailedMessage {
+		t.Fatalf("got %v, want the service account auth-failed message", err)
 	}
 }

@@ -60,6 +60,7 @@ type mockLucidityServer struct {
 	// connection without a response.
 	onboardFault string
 	onboardCalls int
+	getByIDCalls int
 	patchCalls   []client.UpdateTenantRequest
 }
 
@@ -68,14 +69,18 @@ func newMockLucidityServer(t *testing.T) (*httptest.Server, *mockLucidityServer)
 	m := &mockLucidityServer{tenants: map[string]*mockTenant{}}
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/external/api/v1/auth/user-token/refresh", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/v1/oauth2/token", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"accessToken": "mock-access-token"})
 	})
 
-	mux.HandleFunc("/external/client/api/v1/tenants/onboard", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/v1/tenants/aws/onboard", func(w http.ResponseWriter, r *http.Request) {
 		var req client.OnboardTenantRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.CloudEntityInformation.CloudProvider != "" {
+			t.Errorf("revamped onboard body must not carry cloudProvider (it's in the path), got %q", req.CloudEntityInformation.CloudProvider)
+		}
+		req.CloudEntityInformation.CloudProvider = "AWS"
 		accountID := req.CloudEntityInformation.CloudProviderAccountID
 
 		m.mu.Lock()
@@ -85,7 +90,7 @@ func newMockLucidityServer(t *testing.T) (*httptest.Server, *mockLucidityServer)
 			if existing.Status == client.TenantStatusActive {
 				msg = "A tenant already exists for cloudProviderAccountId '" + accountID + "'."
 			} else {
-				msg = "An already deboarded (INACTIVE) tenant exists for cloudProviderAccountId '" + accountID + "'; re-onboarding support does not exist right now."
+				msg = "An already deboarded tenant exists for cloudProviderAccountId '" + accountID + "'."
 			}
 			writeMockEnvelope(w, http.StatusConflict, false, nil, "CONFLICT", msg)
 			return
@@ -138,11 +143,14 @@ func newMockLucidityServer(t *testing.T) (*httptest.Server, *mockLucidityServer)
 		}, "", "")
 	})
 
-	mux.HandleFunc("/external/client/api/v1/tenants", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/v1/tenants", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.NotFound(w, r)
+			return
+		}
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		switch r.Method {
-		case http.MethodGet:
+		{
 			items := make([]map[string]any, 0, len(m.tenants))
 			for _, t := range m.tenants {
 				item := map[string]any{
@@ -162,6 +170,45 @@ func newMockLucidityServer(t *testing.T) (*httptest.Server, *mockLucidityServer)
 				"tenants": items,
 				"meta":    map[string]any{"totalCount": len(items)},
 			}, "", "")
+		}
+	})
+
+	// GET /v1/tenants/{tenantId}: same fields as a list item; 404 when no
+	// tenant has that ID.
+	mux.HandleFunc("/v1/tenants/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.NotFound(w, r)
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, "/v1/tenants/")
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		m.getByIDCalls++
+		for _, t := range m.tenants {
+			if t.TenantID != id {
+				continue
+			}
+			item := map[string]any{
+				"tenantId":               t.TenantID,
+				"cloudProvider":          t.CloudProvider,
+				"cloudProviderAccountId": t.CloudProviderAccountID,
+				"cloudEntityName":        "mock-entity-" + t.CloudProviderAccountID,
+				"displayName":            t.DisplayName,
+				"status":                 t.Status,
+			}
+			if !m.omitExternalID {
+				item["externalId"] = t.ExternalID
+			}
+			writeMockEnvelope(w, http.StatusOK, true, item, "", "")
+			return
+		}
+		writeMockEnvelope(w, http.StatusNotFound, false, nil, "NOT_FOUND", "Tenant not found.")
+	})
+
+	mux.HandleFunc("/v1/tenants/aws", func(w http.ResponseWriter, r *http.Request) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		switch r.Method {
 		case http.MethodPatch:
 			var req client.UpdateTenantRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
@@ -200,10 +247,12 @@ func newMockLucidityServer(t *testing.T) (*httptest.Server, *mockLucidityServer)
 		}
 	})
 
-	mux.HandleFunc("/external/client/api/v1/tenants/deboard", func(w http.ResponseWriter, r *http.Request) {
-		var req client.DeboardTenantRequest
+	mux.HandleFunc("/v1/tenants/aws/deboard", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			CloudProviderAccountID string `json:"cloudProviderAccountId"`
+		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
-		accountID := req.CloudEntityInformation.CloudProviderAccountID
+		accountID := req.CloudProviderAccountID
 
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -273,7 +322,7 @@ func lifecycleValue(overrides map[string]tftypes.Value, ceiOverrides map[string]
 // ACTIVE, so CONFLICT) -> deboard -> re-onboard (INACTIVE, so CONFLICT).
 func TestLifecycle_OnboardReadUpdateDestroySafety(t *testing.T) {
 	srv, _ := newMockLucidityServer(t)
-	c := client.NewClient(srv.URL, "test-token", client.WithHTTPClient(srv.Client()))
+	c := client.NewClient(srv.URL, client.Credentials{RefreshToken: "test-token"}, client.WithHTTPClient(srv.Client()))
 	r := &tenantResource{client: c}
 	sch := tenantSchema(t)
 	ctx := context.Background()
@@ -418,7 +467,7 @@ func mustList(t *testing.T, c *client.Client, ctx context.Context) []client.Tena
 // resource's INACTIVE handling design.
 func TestLifecycle_ReadDetectsOutOfBandDeboard(t *testing.T) {
 	srv, mock := newMockLucidityServer(t)
-	c := client.NewClient(srv.URL, "test-token", client.WithHTTPClient(srv.Client()))
+	c := client.NewClient(srv.URL, client.Credentials{RefreshToken: "test-token"}, client.WithHTTPClient(srv.Client()))
 	r := &tenantResource{client: c}
 	sch := tenantSchema(t)
 	ctx := context.Background()
@@ -464,7 +513,7 @@ func TestLifecycle_ReadDetectsOutOfBandDeboard(t *testing.T) {
 // matching tenant at all.
 func TestLifecycle_ReadRemovesTenantThatNoLongerExists(t *testing.T) {
 	srv, mock := newMockLucidityServer(t)
-	c := client.NewClient(srv.URL, "test-token", client.WithHTTPClient(srv.Client()))
+	c := client.NewClient(srv.URL, client.Credentials{RefreshToken: "test-token"}, client.WithHTTPClient(srv.Client()))
 	r := &tenantResource{client: c}
 	sch := tenantSchema(t)
 	ctx := context.Background()
@@ -504,17 +553,17 @@ func TestLifecycle_ReadRemovesTenantThatNoLongerExists(t *testing.T) {
 // than being masked behind AuthError's generic message.
 func TestLifecycle_OnboardCloudAccountValidationFailure(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/external/api/v1/auth/user-token/refresh", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/v1/oauth2/token", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"accessToken": "mock-access-token"})
 	})
-	mux.HandleFunc("/external/client/api/v1/tenants/onboard", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/v1/tenants/aws/onboard", func(w http.ResponseWriter, r *http.Request) {
 		writeMockEnvelope(w, http.StatusUnauthorized, false, nil, "UNAUTHORIZED", "Authentication failed: the cloud account could not be validated.")
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
-	c := client.NewClient(srv.URL, "test-token", client.WithHTTPClient(srv.Client()))
+	c := client.NewClient(srv.URL, client.Credentials{RefreshToken: "test-token"}, client.WithHTTPClient(srv.Client()))
 	r := &tenantResource{client: c}
 	sch := tenantSchema(t)
 	ctx := context.Background()
@@ -524,7 +573,7 @@ func TestLifecycle_OnboardCloudAccountValidationFailure(t *testing.T) {
 	// onboard call by using a mux that 404s list, which surfaces as a
 	// generic list error instead. To isolate the onboard-error path
 	// specifically, stub list to return an empty result.
-	mux.HandleFunc("/external/client/api/v1/tenants", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/v1/tenants", func(w http.ResponseWriter, r *http.Request) {
 		writeMockEnvelope(w, http.StatusOK, true, map[string]any{"tenants": []client.TenantListItem{}, "meta": map[string]any{"totalCount": 0}}, "", "")
 	})
 
@@ -583,6 +632,14 @@ func TestLifecycle_ImportState(t *testing.T) {
 			t.Fatal("expected an error diagnostic for a malformed import ID, got none")
 		}
 	})
+
+	t.Run("non-AWS", func(t *testing.T) {
+		resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: sch, Raw: tftypes.NewValue(sch.Type().TerraformType(ctx), nil)}}
+		r.ImportState(ctx, resource.ImportStateRequest{ID: "AZURE/sub-1"}, resp)
+		if !resp.Diagnostics.HasError() {
+			t.Fatal("expected an error diagnostic for an AZURE import ID, got none")
+		}
+	})
 }
 
 // --- external ID read/update + import ------------------------------------
@@ -606,7 +663,7 @@ func fastPolling(t *testing.T) {
 func newLifecycleResource(t *testing.T) (*tenantResource, *mockLucidityServer, *client.Client) {
 	t.Helper()
 	srv, mock := newMockLucidityServer(t)
-	c := client.NewClient(srv.URL, "test-token", client.WithHTTPClient(srv.Client()))
+	c := client.NewClient(srv.URL, client.Credentials{RefreshToken: "test-token"}, client.WithHTTPClient(srv.Client()))
 	return &tenantResource{client: c}, mock, c
 }
 
@@ -662,7 +719,9 @@ func TestLifecycle_ReadExternalIDDriftAndBackcompat(t *testing.T) {
 		return lifecycleValue(nil, map[string]tftypes.Value{"cloud_provider_account_id": strVal(acct)})
 	}
 	seed := func(mock *mockLucidityServer, ext *string) {
-		mock.tenants[acct] = &mockTenant{TenantID: "t", CloudProvider: "AWS", CloudProviderAccountID: acct,
+		// TenantID matches the fixture's tenant_id, as it always does for real
+		// (tenant_id comes from Lucidity), so Read's get-by-ID finds it.
+		mock.tenants[acct] = &mockTenant{TenantID: "acme_123456789012", CloudProvider: "AWS", CloudProviderAccountID: acct,
 			DisplayName: "non-prod", Status: client.TenantStatusActive, ExternalID: ext}
 	}
 
@@ -697,19 +756,6 @@ func TestLifecycle_ReadExternalIDDriftAndBackcompat(t *testing.T) {
 		_, m := runRead(t, r, prior())
 		if got := m.CloudEntityInformation.ExternalID.ValueString(); got != extIDA {
 			t.Fatalf("absent externalId key must not wipe state, got %q", got)
-		}
-	})
-	t.Run("azure never adopts an external id", func(t *testing.T) {
-		r, mock, _ := newLifecycleResource(t)
-		mock.tenants["sub-1"] = &mockTenant{TenantID: "t", CloudProvider: "AZURE", CloudProviderAccountID: "sub-1",
-			DisplayName: "az", Status: client.TenantStatusActive, ExternalID: ptr(extIDB)}
-		az := lifecycleValue(nil, map[string]tftypes.Value{
-			"cloud_provider": strVal("AZURE"), "cloud_provider_account_id": strVal("sub-1"),
-			"aws_iam_external_id": tftypes.NewValue(tftypes.String, nil),
-		})
-		_, m := runRead(t, r, az)
-		if !m.CloudEntityInformation.ExternalID.IsNull() {
-			t.Fatalf("AZURE state must keep a null aws_iam_external_id, got %q", m.CloudEntityInformation.ExternalID.ValueString())
 		}
 	})
 }
@@ -946,5 +992,57 @@ func TestLifecycle_ActiveDuplicateErrorPointsAtImport(t *testing.T) {
 	}
 	if !strings.Contains(resp.Diagnostics[0].Detail(), "terraform import lucidity_tenant.<name> AWS/211125699795") {
 		t.Fatalf("duplicate error should give the import command, got: %s", resp.Diagnostics[0].Detail())
+	}
+}
+
+// The revamped onboard reports missing IAM permissions as a 400
+// INVALID_REQUEST; it should become an actionable error.
+func TestLifecycle_OnboardMissingCloudPermissions(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/oauth2/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"accessToken": "mock-access-token"})
+	})
+	mux.HandleFunc("/v1/tenants", func(w http.ResponseWriter, r *http.Request) {
+		writeMockEnvelope(w, http.StatusOK, true, map[string]any{"tenants": []client.TenantListItem{}, "meta": map[string]any{"totalCount": 0}}, "", "")
+	})
+	mux.HandleFunc("/v1/tenants/aws/onboard", func(w http.ResponseWriter, r *http.Request) {
+		writeMockEnvelope(w, http.StatusBadRequest, false, nil, "INVALID_REQUEST", "Onboard failed due to missing cloud permissions: ec2:DescribeVolumes")
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	r := &tenantResource{client: client.NewClient(srv.URL, client.Credentials{RefreshToken: "test-token"}, client.WithHTTPClient(srv.Client()))}
+	sch := tenantSchema(t)
+	plan := lifecycleValue(map[string]tftypes.Value{"lucidity_dashboard_display_name": strVal("perm-test")}, map[string]tftypes.Value{
+		"cloud_provider":            strVal("AWS"),
+		"cloud_provider_account_id": strVal("555555555555"),
+	})
+	var resp resource.CreateResponse
+	resp.State = tfsdk.State{Schema: sch}
+	r.Create(context.Background(), resource.CreateRequest{Plan: tfsdk.Plan{Raw: plan, Schema: sch}}, &resp)
+	if !resp.Diagnostics.HasError() || resp.Diagnostics.Errors()[0].Summary() != "IAM role is missing permissions Lucidity needs" ||
+		!strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "ec2:DescribeVolumes") {
+		t.Fatalf("expected the missing-permissions error naming the permission, got: %+v", resp.Diagnostics)
+	}
+}
+
+// Read uses GET /v1/tenants/{tenantId} when state has a tenant_id, and a
+// 404 there removes the resource from state.
+func TestLifecycle_ReadUsesGetByID(t *testing.T) {
+	r, mock, _ := newLifecycleResource(t)
+	mock.tenants["123456789012"] = &mockTenant{TenantID: "acme_123456789012", CloudProvider: "AWS", CloudProviderAccountID: "123456789012",
+		DisplayName: "by-id", Status: client.TenantStatusActive}
+	prior := lifecycleValue(nil, map[string]tftypes.Value{"cloud_provider_account_id": strVal("123456789012")})
+
+	_, m := runRead(t, r, prior)
+	if mock.getByIDCalls != 1 || m.DisplayName.ValueString() != "by-id" {
+		t.Fatalf("got %d get-by-ID calls and display name %q; want 1 call and by-id", mock.getByIDCalls, m.DisplayName.ValueString())
+	}
+
+	delete(mock.tenants, "123456789012")
+	readResp, _ := runRead(t, r, prior)
+	if readResp.Diagnostics.HasError() || !readResp.State.Raw.IsNull() {
+		t.Fatalf("a 404 from get-by-ID must remove the resource from state, got %+v", readResp.Diagnostics)
 	}
 }

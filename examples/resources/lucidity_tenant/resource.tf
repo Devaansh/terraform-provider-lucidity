@@ -1,7 +1,5 @@
-# Onboarding a new AWS account. Onboarding is AWS-only today — an AZURE or
-# GCP tenant can only enter Terraform via `terraform import` of an account
-# that already exists on Lucidity some other way (see import.sh in this
-# directory), after which it's fully readable/updatable/destroyable here.
+# Onboarding a new AWS account. Lucidity's tenant API supports AWS accounts
+# only for now; Azure and GCP will follow in a later Lucidity release.
 resource "lucidity_tenant" "example" {
   lucidity_dashboard_display_name = "example-account"
   lucidity_product_list           = ["AUTOSCALER"]

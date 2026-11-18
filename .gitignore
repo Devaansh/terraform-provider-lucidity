@@ -5,3 +5,9 @@
 *.tfstate.*
 .terraform/
 .terraform.lock.hcl
+
+# Personal solutioning notes (not for commit)
+/sa-notes/
+
+# Personal Claude Code working context (not for commit)
+/CLAUDE.md

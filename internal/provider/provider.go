@@ -41,10 +41,15 @@ type lucidityProviderModel struct {
 	RefreshToken                 types.String `tfsdk:"refresh_token"`
 	RefreshTokenFile             types.String `tfsdk:"refresh_token_file"`
 	RefreshTokenCommand          types.String `tfsdk:"refresh_token_command"`
+	ClientID                     types.String `tfsdk:"client_id"`
+	ClientSecret                 types.String `tfsdk:"client_secret"`
+	ClientSecretFile             types.String `tfsdk:"client_secret_file"`
+	ClientSecretCommand          types.String `tfsdk:"client_secret_command"`
 	LucidityDashboardURL         types.String `tfsdk:"lucidity_dashboard_url"`
 	MaxParallelRequests          types.Int64  `tfsdk:"max_parallel_requests"`
 	ProactiveRefreshBufferMins   types.Int64  `tfsdk:"proactive_refresh_buffer_minutes"`
 	LucidityDashboardAccountName types.String `tfsdk:"lucidity_dashboard_account_name"`
+	TenantID                     types.String `tfsdk:"tenant_id"`
 }
 
 // LucidityClients bundles the API client made available to resources and
@@ -74,15 +79,32 @@ func (p *LucidityProvider) Schema(_ context.Context, _ provider.SchemaRequest, r
 			"refresh_token": schema.StringAttribute{
 				Optional:    true,
 				Sensitive:   true,
-				Description: "Long-lived Lucidity refresh token, supplied directly. Discouraged: the value ends up in your .tf config or, if fed from a data source, in Terraform state. Prefer refresh_token_file, refresh_token_command, or the LUCIDITY_REFRESH_TOKEN environment variable. Exactly one of refresh_token, refresh_token_file, or refresh_token_command may be set.",
+				Description: "Long-lived Lucidity refresh token for a user, supplied directly (format <accessKey>.<secretKey>, generated in the dashboard). Discouraged: the value ends up in your .tf config or, if fed from a data source, in Terraform state. Prefer refresh_token_file, refresh_token_command, or the LUCIDITY_REFRESH_TOKEN environment variable. At most one of refresh_token, refresh_token_file, or refresh_token_command may be set, and not together with service account credentials (client_id / client_secret*).",
 			},
 			"refresh_token_file": schema.StringAttribute{
 				Optional:    true,
-				Description: "Path to a local file containing only the Lucidity refresh token; its contents are trimmed of surrounding whitespace. Never sent anywhere but read into memory. Exactly one of refresh_token, refresh_token_file, or refresh_token_command may be set.",
+				Description: "Path to a local file containing only the Lucidity refresh token; its contents are trimmed of surrounding whitespace. Never sent anywhere but read into memory. At most one of refresh_token, refresh_token_file, or refresh_token_command may be set.",
 			},
 			"refresh_token_command": schema.StringAttribute{
 				Optional:    true,
-				Description: "Shell command whose trimmed stdout is used as the Lucidity refresh token, e.g. `vault kv get -field=token secret/lucidity`. Runs via the platform shell with a 30s timeout; stdout is never logged, including at TF_LOG=DEBUG. Exactly one of refresh_token, refresh_token_file, or refresh_token_command may be set.",
+				Description: "Shell command whose trimmed stdout is used as the Lucidity refresh token, e.g. `vault kv get -field=token secret/lucidity`. Runs via the platform shell with a 30s timeout; stdout is never logged, including at TF_LOG=DEBUG. At most one of refresh_token, refresh_token_file, or refresh_token_command may be set.",
+			},
+			"client_id": schema.StringAttribute{
+				Optional:    true,
+				Description: "Client ID of a Lucidity service account credential, for authenticating as a service account instead of a user. Can also be set with the LUCIDITY_CLIENT_ID environment variable. Requires a client secret (client_secret, client_secret_file, client_secret_command, or LUCIDITY_CLIENT_SECRET). Can't be combined with a refresh token.",
+			},
+			"client_secret": schema.StringAttribute{
+				Optional:    true,
+				Sensitive:   true,
+				Description: "Client secret of a Lucidity service account credential, supplied directly. Discouraged for the same reason as refresh_token; prefer client_secret_file, client_secret_command, or the LUCIDITY_CLIENT_SECRET environment variable. At most one of client_secret, client_secret_file, or client_secret_command may be set.",
+			},
+			"client_secret_file": schema.StringAttribute{
+				Optional:    true,
+				Description: "Path to a local file containing only the service account client secret; its contents are trimmed of surrounding whitespace. At most one of client_secret, client_secret_file, or client_secret_command may be set.",
+			},
+			"client_secret_command": schema.StringAttribute{
+				Optional:    true,
+				Description: "Shell command whose trimmed stdout is used as the service account client secret, e.g. `aws secretsmanager get-secret-value --secret-id lucidity/client-secret --query SecretString --output text`. Runs via the platform shell with a 30s timeout; stdout is never logged. At most one of client_secret, client_secret_file, or client_secret_command may be set.",
 			},
 			"lucidity_dashboard_url": schema.StringAttribute{
 				Required:    true,
@@ -98,6 +120,13 @@ func (p *LucidityProvider) Schema(_ context.Context, _ provider.SchemaRequest, r
 					int64validator.AtLeast(1),
 				},
 			},
+			"tenant_id": schema.StringAttribute{
+				Optional: true,
+				Description: "Default Lucidity tenant ID (e.g. lucidity_tenant.<name>.tenant_id) for API calls, sent as the X-tenant header. " +
+					"Each resource and data source (except lucidity_tenant) can override it with its own tenant_id. Unset: no X-tenant header is sent, as before. " +
+					"Needed when authenticating as a service account, whose roles are per tenant.",
+				Validators: []validator.String{stringvalidator.LengthAtLeast(1)},
+			},
 			"proactive_refresh_buffer_minutes": schema.Int64Attribute{
 				Optional: true,
 				Description: fmt.Sprintf(
@@ -112,19 +141,30 @@ func (p *LucidityProvider) Schema(_ context.Context, _ provider.SchemaRequest, r
 			},
 			"lucidity_dashboard_account_name": schema.StringAttribute{
 				Required:    true,
-				Description: "The Lucidity dashboard account this refresh token is expected to belong to. Intended to catch a wrong-account refresh token before any tenant operation runs; the provider cannot yet cross-validate this against the token itself (no Lucidity endpoint currently exposes which account a token belongs to), so today this is recorded but not enforced.",
+				Description: "The Lucidity dashboard account the credentials (refresh token or service account) are expected to belong to. Intended to catch a wrong-account refresh token before any tenant operation runs; the provider cannot yet cross-validate this against the token itself (no Lucidity endpoint currently exposes which account a token belongs to), so today this is recorded but not enforced.",
 			},
 		},
 	}
 }
 
-// ConfigValidators enforces the locked token-source precedence: zero or one
-// of refresh_token / refresh_token_file / refresh_token_command may be set
-// (zero is valid — it means "use LUCIDITY_REFRESH_TOKEN"); more than one is
-// a hard validate-time error naming every attribute that was set.
+// ConfigValidators enforce one credential type with one source, at
+// validate time, naming every attribute that was set:
+//   - at most one secret source overall: a refresh token source or a client
+//     secret source, never two (zero is valid — it means "use the
+//     environment variables");
+//   - client_id never alongside a refresh token source.
 func (p *LucidityProvider) ConfigValidators(_ context.Context) []provider.ConfigValidator {
 	return []provider.ConfigValidator{
 		providervalidator.Conflicting(
+			path.MatchRoot("refresh_token"),
+			path.MatchRoot("refresh_token_file"),
+			path.MatchRoot("refresh_token_command"),
+			path.MatchRoot("client_secret"),
+			path.MatchRoot("client_secret_file"),
+			path.MatchRoot("client_secret_command"),
+		),
+		providervalidator.Conflicting(
+			path.MatchRoot("client_id"),
 			path.MatchRoot("refresh_token"),
 			path.MatchRoot("refresh_token_file"),
 			path.MatchRoot("refresh_token_command"),
@@ -139,9 +179,17 @@ func (p *LucidityProvider) Configure(ctx context.Context, req provider.Configure
 		return
 	}
 
-	refreshToken, err := resolveRefreshToken(ctx, data.RefreshToken.ValueString(), data.RefreshTokenFile.ValueString(), data.RefreshTokenCommand.ValueString())
+	credentials, err := resolveCredentials(ctx, credentialSources{
+		RefreshToken:        data.RefreshToken.ValueString(),
+		RefreshTokenFile:    data.RefreshTokenFile.ValueString(),
+		RefreshTokenCommand: data.RefreshTokenCommand.ValueString(),
+		ClientID:            data.ClientID.ValueString(),
+		ClientSecret:        data.ClientSecret.ValueString(),
+		ClientSecretFile:    data.ClientSecretFile.ValueString(),
+		ClientSecretCommand: data.ClientSecretCommand.ValueString(),
+	})
 	if err != nil {
-		resp.Diagnostics.AddError("Unable to resolve Lucidity refresh token", err.Error())
+		resp.Diagnostics.AddError("Unable to resolve Lucidity credentials", err.Error())
 		return
 	}
 
@@ -169,9 +217,10 @@ func (p *LucidityProvider) Configure(ctx context.Context, req provider.Configure
 		proactiveRefreshAge = client.AccessTokenTTL - time.Duration(bufferMinutes)*time.Minute
 	}
 
-	apiClient := client.NewClient(baseURL, refreshToken,
+	apiClient := client.NewClient(baseURL, credentials,
 		client.WithMaxParallelRequests(maxParallel),
 		client.WithProactiveRefreshAge(proactiveRefreshAge),
+		client.WithDefaultTenant(data.TenantID.ValueString()),
 	)
 	apiClient.DebugLog = func(ctx context.Context, msg string, fields map[string]any) {
 		tflog.Debug(ctx, msg, fields)
@@ -185,11 +234,19 @@ func (p *LucidityProvider) Configure(ctx context.Context, req provider.Configure
 func (p *LucidityProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		newTenantResource,
+		newScalingPolicyResource,
+		newScalingPolicyAttachmentResource,
+		newServiceAccountResource,
+		newServiceAccountCredentialResource,
 	}
 }
 
 func (p *LucidityProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		newTenantsDataSource,
+		newScalingPoliciesDataSource,
+		newUsersDataSource,
+		newRolesDataSource,
+		newServiceAccountsDataSource,
 	}
 }

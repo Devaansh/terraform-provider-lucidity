@@ -13,13 +13,11 @@ const tenantResourceTypeName = "lucidity_tenant"
 func cloudEntityInformationType() tftypes.Object {
 	return tftypes.Object{
 		AttributeTypes: map[string]tftypes.Type{
-			"cloud_provider":             tftypes.String,
-			"cloud_provider_account_id":  tftypes.String,
-			"aws_iam_external_id":        tftypes.String,
-			"aws_iam_role_name":          tftypes.String,
-			"aws_iam_policy_name":        tftypes.String,
-			"azure_service_principal_id": tftypes.String,
-			"azure_directory_id":         tftypes.String,
+			"cloud_provider":            tftypes.String,
+			"cloud_provider_account_id": tftypes.String,
+			"aws_iam_external_id":       tftypes.String,
+			"aws_iam_role_name":         tftypes.String,
+			"aws_iam_policy_name":       tftypes.String,
 		},
 	}
 }
@@ -46,13 +44,11 @@ func tenantConfigType() tftypes.Object {
 // real plan). Individual tests override one field to exercise a validator.
 func validTenantConfig() map[string]tftypes.Value {
 	cei := tftypes.NewValue(cloudEntityInformationType(), map[string]tftypes.Value{
-		"cloud_provider":             strVal("AWS"),
-		"cloud_provider_account_id":  strVal("123456789012"),
-		"aws_iam_external_id":        strVal("8f14e45f-ceea-4331-9f5e-111111111111"),
-		"aws_iam_role_name":          strVal("LucidityRole"),
-		"aws_iam_policy_name":        strVal("LucidityPolicy"),
-		"azure_service_principal_id": tftypes.NewValue(tftypes.String, nil),
-		"azure_directory_id":         tftypes.NewValue(tftypes.String, nil),
+		"cloud_provider":            strVal("AWS"),
+		"cloud_provider_account_id": strVal("123456789012"),
+		"aws_iam_external_id":       strVal("8f14e45f-ceea-4331-9f5e-111111111111"),
+		"aws_iam_role_name":         strVal("LucidityRole"),
+		"aws_iam_policy_name":       strVal("LucidityPolicy"),
 	})
 	productList := tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, []tftypes.Value{strVal("AUTOSCALER")})
 	return map[string]tftypes.Value{
@@ -72,13 +68,11 @@ func tenantConfigValue(t *testing.T, overrides map[string]tftypes.Value, ceiOver
 		ceiSet := map[string]tftypes.Value{}
 		// Start from the valid CEI and apply overrides.
 		validCEI := map[string]tftypes.Value{
-			"cloud_provider":             strVal("AWS"),
-			"cloud_provider_account_id":  strVal("123456789012"),
-			"aws_iam_external_id":        strVal("8f14e45f-ceea-4331-9f5e-111111111111"),
-			"aws_iam_role_name":          strVal("LucidityRole"),
-			"aws_iam_policy_name":        strVal("LucidityPolicy"),
-			"azure_service_principal_id": tftypes.NewValue(tftypes.String, nil),
-			"azure_directory_id":         tftypes.NewValue(tftypes.String, nil),
+			"cloud_provider":            strVal("AWS"),
+			"cloud_provider_account_id": strVal("123456789012"),
+			"aws_iam_external_id":       strVal("8f14e45f-ceea-4331-9f5e-111111111111"),
+			"aws_iam_role_name":         strVal("LucidityRole"),
+			"aws_iam_policy_name":       strVal("LucidityPolicy"),
 		}
 		for k, v := range validCEI {
 			ceiSet[k] = v
@@ -148,33 +142,25 @@ func TestTenantResourceRPC_ValidateConfig_RejectsUnsupportedCloudProvider(t *tes
 		t.Fatalf("ValidateResourceConfig: %v", err)
 	}
 	if !hasErrorDiagnostic(resp.Diagnostics) {
-		t.Fatalf("expected an error diagnostic for an unsupported cloud_provider (must be AWS, AZURE, or GCP), got: %+v", resp.Diagnostics)
+		t.Fatalf("expected an error diagnostic for an unsupported cloud_provider (must be AWS), got: %+v", resp.Diagnostics)
 	}
 }
 
-// AZURE/GCP resources only ever enter Terraform via `terraform import` (onboarding
-// is AWS-only), so a valid AZURE config must NOT require any of the AWS-only
-// fields — they're enforced conditionally in ValidateConfig, not via schema
-// Required, precisely so this case validates cleanly.
-func TestTenantResourceRPC_ValidateConfig_AcceptsAzureProviderWithoutAWSFields(t *testing.T) {
+// Lucidity's tenant API is AWS-only (legacy and revamped alike), so AZURE
+// and GCP are rejected at validate time.
+func TestTenantResourceRPC_ValidateConfig_RejectsAzureAndGCP(t *testing.T) {
 	srv := newTestProviderServer(t)
-	resp, err := srv.ValidateResourceConfig(context.Background(), &tfprotov6.ValidateResourceConfigRequest{
-		TypeName: tenantResourceTypeName,
-		Config: tenantConfigValue(t, map[string]tftypes.Value{
-			"lucidity_product_list": tftypes.NewValue(tftypes.List{ElementType: tftypes.String}, nil),
-		}, map[string]tftypes.Value{
-			"cloud_provider":            strVal("AZURE"),
-			"cloud_provider_account_id": strVal("00000000-0000-0000-0000-000000000000"),
-			"aws_iam_external_id":       tftypes.NewValue(tftypes.String, nil),
-			"aws_iam_role_name":         tftypes.NewValue(tftypes.String, nil),
-			"aws_iam_policy_name":       tftypes.NewValue(tftypes.String, nil),
-		}),
-	})
-	if err != nil {
-		t.Fatalf("ValidateResourceConfig: %v", err)
-	}
-	if hasErrorDiagnostic(resp.Diagnostics) {
-		t.Fatalf("expected no error diagnostic for a valid AZURE config with no AWS-only fields set, got: %+v", resp.Diagnostics)
+	for _, cp := range []string{"AZURE", "GCP"} {
+		resp, err := srv.ValidateResourceConfig(context.Background(), &tfprotov6.ValidateResourceConfigRequest{
+			TypeName: tenantResourceTypeName,
+			Config:   tenantConfigValue(t, nil, map[string]tftypes.Value{"cloud_provider": strVal(cp)}),
+		})
+		if err != nil {
+			t.Fatalf("ValidateResourceConfig: %v", err)
+		}
+		if !hasErrorDiagnostic(resp.Diagnostics) {
+			t.Fatalf("expected an error diagnostic for cloud_provider %q, got: %+v", cp, resp.Diagnostics)
+		}
 	}
 }
 
@@ -329,13 +315,11 @@ func boolVal(b bool) tftypes.Value { return tftypes.NewValue(tftypes.Bool, b) }
 // state or a fully-known plan) for driving PlanResourceChange directly.
 func tenantFullValue(overrides map[string]tftypes.Value, ceiOverrides map[string]tftypes.Value) tftypes.Value {
 	validCEI := map[string]tftypes.Value{
-		"cloud_provider":             strVal("AWS"),
-		"cloud_provider_account_id":  strVal("123456789012"),
-		"aws_iam_external_id":        strVal("8f14e45f-ceea-4331-9f5e-111111111111"),
-		"aws_iam_role_name":          strVal("LucidityRole"),
-		"aws_iam_policy_name":        strVal("LucidityPolicy"),
-		"azure_service_principal_id": tftypes.NewValue(tftypes.String, nil),
-		"azure_directory_id":         tftypes.NewValue(tftypes.String, nil),
+		"cloud_provider":            strVal("AWS"),
+		"cloud_provider_account_id": strVal("123456789012"),
+		"aws_iam_external_id":       strVal("8f14e45f-ceea-4331-9f5e-111111111111"),
+		"aws_iam_role_name":         strVal("LucidityRole"),
+		"aws_iam_policy_name":       strVal("LucidityPolicy"),
 	}
 	for k, v := range ceiOverrides {
 		validCEI[k] = v

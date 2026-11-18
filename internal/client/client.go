@@ -14,6 +14,10 @@ import (
 )
 
 const (
+	// X-Authtype is the legacy API's auth header. The revamped API only
+	// documents "Authorization: Bearer", and Lucidity engineering confirmed
+	// the legacy tenant endpoints accept the new token; X-Authtype is still
+	// sent until it's confirmed unnecessary, then it can go.
 	headerAuthType = "X-Authtype"
 	authTypeValue  = "lucidity_access_token"
 
@@ -32,8 +36,18 @@ type envelope struct {
 }
 
 type envelopeError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code    string          `json:"code"`
+	Message string          `json:"message"`
+	Details json.RawMessage `json:"details,omitempty"`
+}
+
+// flatError is the unwrapped {code,message,details} error shape the API docs
+// specify for the refresh and temporary buffer endpoints, as opposed to the
+// envelope's nested error object.
+type flatError struct {
+	Code    string          `json:"code"`
+	Message string          `json:"message"`
+	Details json.RawMessage `json:"details"`
 }
 
 // APIError is a parsed Lucidity API error, carrying the requestId needed for
@@ -43,13 +57,19 @@ type APIError struct {
 	Code       string
 	Message    string
 	RequestID  string
+	// Details is the raw "details" object from a flat error body, if any.
+	Details string
 }
 
 func (e *APIError) Error() string {
-	if e.RequestID != "" {
-		return fmt.Sprintf("lucidity API error [%s]: %s (requestId=%s)", e.Code, e.Message, e.RequestID)
+	msg := fmt.Sprintf("lucidity API error [%s]: %s", e.Code, e.Message)
+	if e.Details != "" {
+		msg += fmt.Sprintf(" (details=%s)", e.Details)
 	}
-	return fmt.Sprintf("lucidity API error [%s]: %s", e.Code, e.Message)
+	if e.RequestID != "" {
+		msg += fmt.Sprintf(" (requestId=%s)", e.RequestID)
+	}
+	return msg
 }
 
 func parseErrorBody(status int, body []byte) error {
@@ -60,7 +80,18 @@ func parseErrorBody(status int, body []byte) error {
 			Code:       env.Error.Code,
 			Message:    env.Error.Message,
 			RequestID:  env.RequestID,
+			Details:    detailsText(env.Error.Details),
 		}
+	}
+	var flat flatError
+	if err := json.Unmarshal(body, &flat); err == nil && (flat.Code != "" || flat.Message != "") {
+		apiErr := &APIError{
+			HTTPStatus: status,
+			Code:       flat.Code,
+			Message:    flat.Message,
+		}
+		apiErr.Details = detailsText(flat.Details)
+		return apiErr
 	}
 	// Render unmapped/unparseable bodies generically but completely
 	// (CONFLICT semantics in particular are unconfirmed upstream).
@@ -98,6 +129,17 @@ func cloudAccountValidationError(status int, body []byte) *APIError {
 	}
 }
 
+// detailsText renders an error's optional "details" (e.g. the revamped
+// API's [{field, message}] list for VALIDATION_ERROR) for display, or ""
+// when there are none.
+func detailsText(raw json.RawMessage) string {
+	d := strings.TrimSpace(string(raw))
+	if d == "" || d == "null" || d == "{}" || d == "[]" {
+		return ""
+	}
+	return truncate(d, 500)
+}
+
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -116,6 +158,7 @@ type Client struct {
 
 	retryBaseDelay      time.Duration // overridable in tests to avoid slow sleeps
 	proactiveRefreshAge time.Duration
+	defaultTenant       string // X-tenant when the call's context names none
 
 	// DebugLog, if set, receives non-secret call metadata (method, path,
 	// status, requestId) after every attempt. Client never passes token or
@@ -169,10 +212,10 @@ func withRetryBaseDelay(d time.Duration) Option {
 	return func(c *Client) { c.retryBaseDelay = d }
 }
 
-// NewClient constructs a Client. refreshToken must already be resolved from
+// NewClient constructs a Client. credentials must already be resolved from
 // whichever provider-config source the user chose (attribute, file, command,
-// or env var) — Client itself is agnostic to where it came from.
-func NewClient(baseURL, refreshToken string, opts ...Option) *Client {
+// or env var) — Client itself is agnostic to where they came from.
+func NewClient(baseURL string, credentials Credentials, opts ...Option) *Client {
 	hc := &http.Client{Timeout: 30 * time.Second}
 	c := &Client{
 		httpClient:          hc,
@@ -184,7 +227,7 @@ func NewClient(baseURL, refreshToken string, opts ...Option) *Client {
 	for _, opt := range opts {
 		opt(c)
 	}
-	c.tokens = NewTokenManager(c.httpClient, baseURL, refreshToken, c.proactiveRefreshAge, c.retryBaseDelay)
+	c.tokens = NewTokenManager(c.httpClient, baseURL, credentials, c.proactiveRefreshAge, c.retryBaseDelay)
 	c.tokens.DebugLog = c.logDebug
 	return c
 }
@@ -283,7 +326,7 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any,
 			if apiErr := cloudAccountValidationError(status, respBody); apiErr != nil {
 				return apiErr
 			}
-			return AuthError{}
+			return AuthError{ServiceAccount: c.tokens.credentials.IsServiceAccount()}
 		case status >= 500:
 			if !retry5xx || attempt >= maxRetryAttempts-1 {
 				return parseErrorBody(status, respBody)
@@ -324,8 +367,11 @@ func (c *Client) doOnce(ctx context.Context, method, path string, bodyBytes []by
 		return 0, nil, fmt.Errorf("lucidity: building request: %w", err)
 	}
 	req.Header.Set(headerAuthType, authTypeValue)
-	req.Header.Set("Authorization", accessToken) // no "Bearer " prefix, enforced here only
+	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Content-Type", "application/json")
+	if tenant := c.tenantFor(ctx); tenant != "" {
+		req.Header.Set(headerTenant, tenant)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -348,9 +394,22 @@ func (c *Client) doOnce(ctx context.Context, method, path string, bodyBytes []by
 	return resp.StatusCode, respBody, nil
 }
 
+// decodeEnvelope decodes a success response into out. Most endpoints wrap
+// their payload in the {success,data,error,requestId} envelope, but the
+// temporary buffer docs show bare objects (e.g. {"bufferId": "..."}), so a
+// body without a "success" key is decoded directly into out.
 func decodeEnvelope(body []byte, out any) error {
 	if out == nil {
 		return nil
+	}
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(body, &probe); err == nil {
+		if _, wrapped := probe["success"]; !wrapped {
+			if err := json.Unmarshal(body, out); err != nil {
+				return fmt.Errorf("lucidity: decoding response: %w", err)
+			}
+			return nil
+		}
 	}
 	var env envelope
 	if err := json.Unmarshal(body, &env); err != nil {

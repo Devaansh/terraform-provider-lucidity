@@ -3,20 +3,18 @@
 page_title: "lucidity_tenant Resource - lucidity"
 subcategory: ""
 description: |-
-  Connects one cloud account to Lucidity as a managed tenant. One resource per cloud account. Onboarding (terraform apply creating a NEW resource) is AWS-only for now — Lucidity's Azure/GCP onboarding API isn't complete yet and returns 400 INVALID_REQUEST; support is pending a future Lucidity release. AZURE and GCP tenants can still be managed here via terraform import (they already exist on Lucidity some other way): List, Update, and Deboard all accept every provider. Deboarding is IRREVERSIBLE via API: see lucidity_dashboard_account_delete_protection and lucidity_account_destroy_behavior below before running terraform destroy.
+  Connects one cloud account to Lucidity as a managed tenant. One resource per cloud account. AWS only for now: Lucidity's tenant API (onboard, update, deboard) supports AWS accounts only; Azure and GCP will follow in a later Lucidity release. Deboarding is IRREVERSIBLE via API: see lucidity_dashboard_account_delete_protection and lucidity_account_destroy_behavior below before running terraform destroy.
 ---
 
 # lucidity_tenant (Resource)
 
-Connects one cloud account to Lucidity as a managed tenant. One resource per cloud account. Onboarding (terraform apply creating a NEW resource) is AWS-only for now — Lucidity's Azure/GCP onboarding API isn't complete yet and returns 400 INVALID_REQUEST; support is pending a future Lucidity release. AZURE and GCP tenants can still be managed here via terraform import (they already exist on Lucidity some other way): List, Update, and Deboard all accept every provider. Deboarding is IRREVERSIBLE via API: see lucidity_dashboard_account_delete_protection and lucidity_account_destroy_behavior below before running terraform destroy.
+Connects one cloud account to Lucidity as a managed tenant. One resource per cloud account. AWS only for now: Lucidity's tenant API (onboard, update, deboard) supports AWS accounts only; Azure and GCP will follow in a later Lucidity release. Deboarding is IRREVERSIBLE via API: see lucidity_dashboard_account_delete_protection and lucidity_account_destroy_behavior below before running terraform destroy.
 
 ## Example Usage
 
 ```terraform
-# Onboarding a new AWS account. Onboarding is AWS-only today — an AZURE or
-# GCP tenant can only enter Terraform via `terraform import` of an account
-# that already exists on Lucidity some other way (see import.sh in this
-# directory), after which it's fully readable/updatable/destroyable here.
+# Onboarding a new AWS account. Lucidity's tenant API supports AWS accounts
+# only for now; Azure and GCP will follow in a later Lucidity release.
 resource "lucidity_tenant" "example" {
   lucidity_dashboard_display_name = "example-account"
   lucidity_product_list           = ["AUTOSCALER"]
@@ -51,7 +49,7 @@ resource "lucidity_tenant" "example" {
 - `cloud_entity_information` (Block, Optional) Cloud account identity and access details. (see [below for nested schema](#nestedblock--cloud_entity_information))
 - `lucidity_account_destroy_behavior` (String) Only consulted when lucidity_dashboard_account_delete_protection = false. "forget" (default): remove from Terraform state only — the tenant stays ACTIVE on Lucidity and continues to be managed/billed there. "deboard": actually call the deboard API — the ONLY path to it. This is IRREVERSIBLE via API.
 - `lucidity_dashboard_account_delete_protection` (Boolean) DEFAULT true. When true, `terraform destroy` (or any change that would replace this resource) hard-errors before making any API call. Deboarding on Lucidity is IRREVERSIBLE via API: an INACTIVE tenant can only be reactivated by Lucidity support, and deboarding an account with running services causes immediate disruption. Set to false, and also set lucidity_account_destroy_behavior explicitly, before destroying this resource.
-- `lucidity_product_list` (List of String) AWS only — required for onboarding (non-empty), ignored for AZURE/GCP (Update doesn't accept it for any provider, and List never returns it, so it can't be recovered by import either). Only "AUTOSCALER" is supported today. Not updatable via any documented API — changing a value already recorded in state forces a replace (re-onboard). Not returned by List either, so after `terraform import` it is assumed to match your config rather than compared (a future Lucidity release is expected to expose it).
+- `lucidity_product_list` (List of String) Required for onboarding (non-empty). Update doesn't accept it, and List never returns it, so it can't be recovered by import either. Only "AUTOSCALER" is supported today. Not updatable via any documented API — changing a value already recorded in state forces a replace (re-onboard). Not returned by List either, so after `terraform import` it is assumed to match your config rather than compared (a future Lucidity release is expected to expose it).
 - `skip_cloud_permission_check` (Boolean) Only disable permission validation if using a custom permission set or if your permission set is not yet up to date with the latest Lucidity permissions. This ignores permission validation entirely — even if the account connects successfully, you may run into permission issues later on. Does NOT skip Lucidity's baseline cloud-account-reachability validation: an unreachable/invalid cloud account still fails onboarding regardless of this flag. Onboard-time only; not applied on update.
 
 ### Read-Only
@@ -65,16 +63,14 @@ resource "lucidity_tenant" "example" {
 
 Required:
 
-- `cloud_provider` (String) AWS, AZURE, or GCP. Onboarding a brand-new resource is AWS-only for now (Azure/GCP onboarding isn't complete on Lucidity's side yet and returns 400 INVALID_REQUEST — pending a future Lucidity release) — an AZURE/GCP resource can only enter Terraform via `terraform import` of a tenant that already exists on Lucidity.
-- `cloud_provider_account_id` (String) The cloud's own identifier for the account: the AWS account ID, the Azure subscription ID (or subscription name), or the GCP project ID. Not a display name. For AWS specifically, must be exactly 12 digits — validated client-side, since Lucidity's own API applies no format check here either.
+- `cloud_provider` (String) Must be AWS: Lucidity's tenant API supports AWS accounts only for now. AZURE and GCP will be accepted once Lucidity supports them.
+- `cloud_provider_account_id` (String) The AWS account ID. Not a display name. Must be exactly 12 digits — validated client-side, since Lucidity's own API applies no format check here either.
 
 Optional:
 
-- `aws_iam_external_id` (String) AWS only — required for onboarding, ignored for AZURE/GCP. Must be a UUID (Lucidity's own API applies no format check server-side, so this provider validates it client-side to catch typos before any API call). Generate one yourself and put it in your IAM role's trust policy. Lucidity sends it on every AssumeRole so your role only trusts requests carrying it. Readable and updatable in place: Lucidity returns it from List (so `terraform import` recovers it and drift is detected) and accepts a new value via update. To rotate it, update your IAM role's trust policy FIRST, then change this value — Lucidity re-validates by assuming your role with the new value, and rejects the update if the trust policy doesn't already match.
-- `aws_iam_policy_name` (String) AWS only — required for onboarding, ignored for AZURE/GCP. e.g. "LucidityPolicy". Updatable in-place after onboarding via the tenant update API.
-- `aws_iam_role_name` (String) AWS only — required for onboarding, ignored for AZURE/GCP. The IAM role name only (e.g. "LucidityRole"), not the full ARN — Lucidity builds the ARN for you. Updatable in-place after onboarding via the tenant update API.
-- `azure_directory_id` (String) AZURE only. AD directory (tenant) id. Not usable at onboard time (Azure onboarding isn't supported) — only meaningful when updating an imported AZURE tenant. Updatable in-place; merged into Lucidity's stored authInfo.
-- `azure_service_principal_id` (String) AZURE only. New service principal id. Not usable at onboard time (Azure onboarding isn't supported) — only meaningful when updating an imported AZURE tenant. Updatable in-place; merged into Lucidity's stored authInfo.
+- `aws_iam_external_id` (String) Required for onboarding. Must be a UUID (Lucidity's own API applies no format check server-side, so this provider validates it client-side to catch typos before any API call). Generate one yourself and put it in your IAM role's trust policy. Lucidity sends it on every AssumeRole so your role only trusts requests carrying it. Readable and updatable in place: Lucidity returns it from List (so `terraform import` recovers it and drift is detected) and accepts a new value via update. To rotate it, update your IAM role's trust policy FIRST, then change this value — Lucidity re-validates by assuming your role with the new value, and rejects the update if the trust policy doesn't already match.
+- `aws_iam_policy_name` (String) Required for onboarding. e.g. "LucidityPolicy". Updatable in-place after onboarding via the tenant update API.
+- `aws_iam_role_name` (String) Required for onboarding. The IAM role name only (e.g. "LucidityRole"), not the full ARN — Lucidity builds the ARN for you. Updatable in-place after onboarding via the tenant update API.
 
 ## Import
 
@@ -83,8 +79,6 @@ Import is supported using the following syntax:
 The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
 
 ```shell
-# Import ID is "<cloud_provider>/<cloud_provider_account_id>".
-# This is also the ONLY way an AZURE or GCP tenant enters Terraform, since
-# onboarding a brand-new resource is AWS-only.
+# Import ID is "<cloud_provider>/<cloud_provider_account_id>" (AWS only for now).
 terraform import lucidity_tenant.example AWS/123456789012
 ```
