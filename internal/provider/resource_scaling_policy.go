@@ -46,6 +46,7 @@ type scalingPolicyResourceModel struct {
 	MinDiskSkuSize          types.Int64  `tfsdk:"min_disk_sku_size"`
 	MaxDiskSkuSize          types.Int64  `tfsdk:"max_disk_sku_size"`
 	AttachedInstanceCount   types.Int64  `tfsdk:"attached_instance_count"`
+	TenantID                types.String `tfsdk:"tenant_id"`
 }
 
 func (r *scalingPolicyResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -119,6 +120,7 @@ func (r *scalingPolicyResource) Schema(_ context.Context, _ resource.SchemaReque
 				Computed:    true,
 				Description: "How many instances the policy is attached to. Lucidity reports only the count, not which instances.",
 			},
+			"tenant_id": tenantIDResourceAttribute(),
 		},
 	}
 }
@@ -196,6 +198,7 @@ func (r *scalingPolicyResource) Create(ctx context.Context, req resource.CreateR
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	ctx = withTenant(ctx, plan.TenantID)
 	settings := settingsFromModel(plan)
 
 	created, err := r.client.CreateScalingPolicy(ctx, settings)
@@ -253,6 +256,7 @@ func (r *scalingPolicyResource) Read(ctx context.Context, req resource.ReadReque
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	ctx = withTenant(ctx, state.TenantID)
 	id, err := parsePolicyID(state.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid scaling policy ID in state", err.Error())
@@ -281,6 +285,7 @@ func (r *scalingPolicyResource) Update(ctx context.Context, req resource.UpdateR
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	ctx = withTenant(ctx, plan.TenantID)
 	id, err := parsePolicyID(state.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid scaling policy ID in state", err.Error())
@@ -309,6 +314,7 @@ func (r *scalingPolicyResource) Delete(ctx context.Context, req resource.DeleteR
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	ctx = withTenant(ctx, state.TenantID)
 	id, err := parsePolicyID(state.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid scaling policy ID in state", err.Error())

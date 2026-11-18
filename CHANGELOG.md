@@ -33,6 +33,19 @@ _Author: Swapnesh Kumar._
 - `lucidity_users` data source (filters `email`, `role`, `status`; follows
   every page) and `lucidity_roles` data source, on the revamped User
   Management API (`GET /v1/users`, `GET /v1/roles`).
+- `lucidity_service_account` resource (create, read, update, delete,
+  import): name, description, `enabled` and tenant roles (`permissions`),
+  all updatable in place, on the revamped Service Account API
+  (`/v1/service-accounts`). Needs an account admin's refresh token.
+- `lucidity_service_account_credential` resource: a client ID and secret
+  (secret stored in state, marked sensitive). Expired or revoked
+  credentials are removed on refresh and recreated on the next apply.
+- `lucidity_service_accounts` data source.
+- `tenant_id` (optional) in the provider block and on every resource and
+  data source except `lucidity_tenant`: the Lucidity tenant a call acts on,
+  sent as the `X-tenant` header. A resource's value overrides the
+  provider's; unset everywhere, no header is sent (no change for existing
+  configurations).
 
 ### Changed
 

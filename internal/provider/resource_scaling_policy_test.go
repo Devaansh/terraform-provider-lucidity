@@ -142,7 +142,7 @@ func policyType() tftypes.Object {
 		"id": tftypes.String, "name": tftypes.String,
 		"min_buffer_in_gb": tftypes.Number, "max_buffer_in_gb": tftypes.Number, "ideal_utilization_percent": tftypes.Number,
 		"max_fs_size_in_gb": tftypes.Number, "min_disk_sku_size": tftypes.Number, "max_disk_sku_size": tftypes.Number,
-		"attached_instance_count": tftypes.Number,
+		"attached_instance_count": tftypes.Number, "tenant_id": tftypes.String,
 	}}
 }
 
@@ -152,6 +152,7 @@ func policyValue(overrides map[string]tftypes.Value) tftypes.Value {
 		"min_buffer_in_gb": numVal(30), "max_buffer_in_gb": numVal(300), "ideal_utilization_percent": numVal(80),
 		"max_fs_size_in_gb": numVal(2000), "min_disk_sku_size": numVal(8), "max_disk_sku_size": numVal(64),
 		"attached_instance_count": tftypes.NewValue(tftypes.Number, nil),
+		"tenant_id":               tftypes.NewValue(tftypes.String, nil),
 	}
 	for k, o := range overrides {
 		v[k] = o
@@ -229,7 +230,7 @@ func TestScalingPolicyLifecycle(t *testing.T) {
 
 func attachmentType() tftypes.Object {
 	return tftypes.Object{AttributeTypes: map[string]tftypes.Type{
-		"id": tftypes.String, "policy_id": tftypes.String, "instance_identifier": instanceIdentifierObjType(),
+		"id": tftypes.String, "policy_id": tftypes.String, "instance_identifier": instanceIdentifierObjType(), "tenant_id": tftypes.String,
 	}}
 }
 
@@ -249,7 +250,7 @@ func attachmentValue(policyID string, inst map[string]tftypes.Value) tftypes.Val
 	}
 	return tftypes.NewValue(attachmentType(), map[string]tftypes.Value{
 		"id": tftypes.NewValue(tftypes.String, nil), "policy_id": strVal(policyID),
-		"instance_identifier": tftypes.NewValue(instanceIdentifierObjType(), i),
+		"instance_identifier": tftypes.NewValue(instanceIdentifierObjType(), i), "tenant_id": tftypes.NewValue(tftypes.String, nil),
 	})
 }
 
@@ -369,14 +370,14 @@ func TestScalingPolicyRPC_MinNotAboveMax(t *testing.T) {
 func TestScalingPolicyAttachmentRPC_UnknownInstanceIdentifier(t *testing.T) {
 	v := tftypes.NewValue(attachmentType(), map[string]tftypes.Value{
 		"id": tftypes.NewValue(tftypes.String, nil), "policy_id": strVal("33"),
-		"instance_identifier": tftypes.NewValue(instanceIdentifierObjType(), tftypes.UnknownValue),
+		"instance_identifier": tftypes.NewValue(instanceIdentifierObjType(), tftypes.UnknownValue), "tenant_id": tftypes.NewValue(tftypes.String, nil),
 	})
 	if d := validateResource(t, "lucidity_scaling_policy_attachment", attachmentType(), v); hasErrorDiagnostic(d) {
 		t.Fatalf("unknown instance_identifier rejected: %+v", d)
 	}
 	null := tftypes.NewValue(attachmentType(), map[string]tftypes.Value{
 		"id": tftypes.NewValue(tftypes.String, nil), "policy_id": strVal("33"),
-		"instance_identifier": tftypes.NewValue(instanceIdentifierObjType(), nil),
+		"instance_identifier": tftypes.NewValue(instanceIdentifierObjType(), nil), "tenant_id": tftypes.NewValue(tftypes.String, nil),
 	})
 	if d := validateResource(t, "lucidity_scaling_policy_attachment", attachmentType(), null); !hasErrorDiagnostic(d) {
 		t.Fatal("missing instance_identifier must be rejected")

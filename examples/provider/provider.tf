@@ -26,4 +26,8 @@ provider "lucidity" {
   client_id             = "svc-abc123"
   client_secret_command = "aws secretsmanager get-secret-value --secret-id lucidity/client-secret --query SecretString --output text"
   # or LUCIDITY_CLIENT_ID + LUCIDITY_CLIENT_SECRET in the environment
+
+  # The Lucidity tenant to act on, sent as X-tenant. Service accounts hold
+  # roles per tenant; any resource or data source can override this.
+  tenant_id = "lucidity-prod"
 }

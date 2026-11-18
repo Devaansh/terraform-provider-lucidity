@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/Devaansh/terraform-provider-lucidity/internal/client"
 )
@@ -24,7 +26,22 @@ type scalingPoliciesDataSource struct {
 }
 
 type scalingPoliciesDataSourceModel struct {
-	Policies []scalingPolicyResourceModel `tfsdk:"policies"`
+	TenantID types.String        `tfsdk:"tenant_id"`
+	Policies []scalingPolicyItem `tfsdk:"policies"`
+}
+
+// scalingPolicyItem is one listed policy: the resource's attributes without
+// its tenant_id input.
+type scalingPolicyItem struct {
+	ID                      types.String `tfsdk:"id"`
+	Name                    types.String `tfsdk:"name"`
+	MinBufferInGb           types.Int64  `tfsdk:"min_buffer_in_gb"`
+	MaxBufferInGb           types.Int64  `tfsdk:"max_buffer_in_gb"`
+	IdealUtilizationPercent types.Int64  `tfsdk:"ideal_utilization_percent"`
+	MaxFsSizeInGb           types.Int64  `tfsdk:"max_fs_size_in_gb"`
+	MinDiskSkuSize          types.Int64  `tfsdk:"min_disk_sku_size"`
+	MaxDiskSkuSize          types.Int64  `tfsdk:"max_disk_sku_size"`
+	AttachedInstanceCount   types.Int64  `tfsdk:"attached_instance_count"`
 }
 
 func (d *scalingPoliciesDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -53,6 +70,7 @@ func (d *scalingPoliciesDataSource) Schema(_ context.Context, _ datasource.Schem
 	resp.Schema = schema.Schema{
 		Description: "Lists every scaling policy in the caller's Lucidity account.",
 		Attributes: map[string]schema.Attribute{
+			"tenant_id": tenantIDDataSourceAttribute(),
 			"policies": schema.ListNestedAttribute{
 				Computed:    true,
 				Description: "Every scaling policy in the account.",
@@ -74,17 +92,26 @@ func (d *scalingPoliciesDataSource) Schema(_ context.Context, _ datasource.Schem
 	}
 }
 
-func (d *scalingPoliciesDataSource) Read(ctx context.Context, _ datasource.ReadRequest, resp *datasource.ReadResponse) {
-	policies, err := d.client.ListScalingPolicies(ctx)
+func (d *scalingPoliciesDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var tenantID types.String
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("tenant_id"), &tenantID)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	policies, err := d.client.ListScalingPolicies(withTenant(ctx, tenantID))
 	if err != nil {
 		resp.Diagnostics.AddError("Unable to list Lucidity scaling policies", err.Error())
 		return
 	}
-	state := scalingPoliciesDataSourceModel{Policies: make([]scalingPolicyResourceModel, 0, len(policies))}
+	state := scalingPoliciesDataSourceModel{TenantID: tenantID, Policies: make([]scalingPolicyItem, 0, len(policies))}
 	for i := range policies {
 		var m scalingPolicyResourceModel
 		applyScalingPolicy(&m, &policies[i])
-		state.Policies = append(state.Policies, m)
+		state.Policies = append(state.Policies, scalingPolicyItem{
+			ID: m.ID, Name: m.Name, MinBufferInGb: m.MinBufferInGb, MaxBufferInGb: m.MaxBufferInGb,
+			IdealUtilizationPercent: m.IdealUtilizationPercent, MaxFsSizeInGb: m.MaxFsSizeInGb,
+			MinDiskSkuSize: m.MinDiskSkuSize, MaxDiskSkuSize: m.MaxDiskSkuSize, AttachedInstanceCount: m.AttachedInstanceCount,
+		})
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }

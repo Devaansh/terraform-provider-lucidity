@@ -6,6 +6,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/Devaansh/terraform-provider-lucidity/internal/client"
 )
@@ -24,7 +26,8 @@ type rolesDataSource struct {
 }
 
 type rolesDataSourceModel struct {
-	Roles []roleModel `tfsdk:"roles"`
+	TenantID types.String `tfsdk:"tenant_id"`
+	Roles    []roleModel  `tfsdk:"roles"`
 }
 
 type roleModel struct {
@@ -61,6 +64,7 @@ func (d *rolesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 	resp.Schema = schema.Schema{
 		Description: "Lists the roles users can be granted on the caller's Lucidity account. Account admin is not a role: it bypasses role checks entirely.",
 		Attributes: map[string]schema.Attribute{
+			"tenant_id": tenantIDDataSourceAttribute(),
 			"roles": schema.ListNestedAttribute{
 				Computed:    true,
 				Description: "Every role on the account.",
@@ -85,13 +89,18 @@ func (d *rolesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 	}
 }
 
-func (d *rolesDataSource) Read(ctx context.Context, _ datasource.ReadRequest, resp *datasource.ReadResponse) {
-	roles, err := d.client.ListRoles(ctx)
+func (d *rolesDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var tenantID types.String
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("tenant_id"), &tenantID)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	roles, err := d.client.ListRoles(withTenant(ctx, tenantID))
 	if err != nil {
 		resp.Diagnostics.AddError("Unable to list Lucidity roles", err.Error())
 		return
 	}
-	state := rolesDataSourceModel{Roles: make([]roleModel, 0, len(roles))}
+	state := rolesDataSourceModel{TenantID: tenantID, Roles: make([]roleModel, 0, len(roles))}
 	for _, r := range roles {
 		m := roleModel{Name: r.Name, NewUserDefault: r.NewUserDefault, Permissions: make([]permissionModel, 0, len(r.Permissions))}
 		for _, p := range r.Permissions {

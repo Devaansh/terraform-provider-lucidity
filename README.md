@@ -52,6 +52,7 @@ boundaries. QA test and logs are organized the same way — see
 | Provider Authentication management | Phase 1 | Shipped | Shipped | Shipped |
 | Lucidity dashboard account management | Phase 2 | Shipped | Not yet supported by Lucidity | Not yet supported by Lucidity |
 | Lucidity dashboard user management | Phase 4 | Read-only (users, roles) | Read-only (users, roles) | Read-only (users, roles) |
+| Service account management | v0.2.0 | In development (not live-tested) | In development (not live-tested) | In development (not live-tested) |
 | Permission validation (cloud IAM vs. Lucidity requirements) | Phase 5 | Not yet implemented | Not yet implemented | Not yet implemented |
 | Lucidity agent installation and status validation | Phase 4 | Not yet implemented | Not yet implemented | Not yet implemented |
 | Onboarding and Disk management | Phase 4 | Not yet implemented | Not yet implemented | Not yet implemented |
@@ -98,6 +99,33 @@ with **one** of two credential types:
 Either way, the provider exchanges the credentials for a 15-minute access
 token, renews it before it expires by sending the same credentials again,
 and never writes the credentials or tokens to state or logs.
+
+**Choosing the tenant (`tenant_id`, sent as `X-tenant`)**
+
+Service accounts hold roles per tenant, so Lucidity needs to know which
+tenant a call acts on. Set the Lucidity tenant ID once in the provider
+block, and override it on any resource or data source (except
+`lucidity_tenant`) that should act on another tenant:
+
+```hcl
+provider "lucidity" {
+  # ...
+  tenant_id = "lucidity-prod" # default for every call
+}
+
+resource "lucidity_scaling_policy" "perf" {
+  tenant_id = "lucidity-perf" # this resource's calls act on lucidity-perf
+  # ...
+}
+```
+
+- The value is a Lucidity tenant ID, e.g. `lucidity_tenant.<name>.tenant_id`
+  or one from the `lucidity_tenants` data source.
+- Unset everywhere: no `X-tenant` header is sent, exactly as before.
+- Changing a resource's `tenant_id` never replaces it; the next apply just
+  records the new value.
+- A service account with roles on several tenants can also use one
+  provider alias per tenant.
 
 **Getting a user refresh token**
 
@@ -566,6 +594,80 @@ Source: [docs/api/revamp/user-management/user-management-api.pdf](docs/api/revam
 | `status` not set | Removed users are included as `DISABLED` | Same; set `status = "ACTIVE"` to leave them out |
 | Account admins | `roleAssignments` is empty; admin is not a role | Shown as `is_account_admin = true` with empty `role_assignments` |
 | Lucidity staff | Hidden from the list | Same |
+
+## Lucidity Service Account Management
+
+Service accounts are non-human identities for scripts and pipelines, with
+roles per tenant and their own client ID/secret, so automation doesn't run
+as a person.
+
+- `lucidity_service_account`: the service account, with its tenant roles
+  (`permissions`). Name, description, `enabled` and roles are all updatable
+  in place, and changes made in the dashboard are detected.
+- `lucidity_service_account_credential`: a client ID and secret. Changing
+  it creates a new credential and revokes the old one.
+- `lucidity_service_accounts` (data source): lists every service account.
+
+```hcl
+resource "lucidity_service_account" "ci" {
+  name        = "ci-deploy-bot"
+  description = "GitHub Actions deploy pipeline"
+  permissions = {
+    (lucidity_tenant.prod.tenant_id) = ["Viewer", "Editor"]
+  }
+  lifecycle {
+    prevent_destroy = true # deleting is permanent; the name can't be reused
+  }
+}
+
+resource "lucidity_service_account_credential" "ci" {
+  service_account_id = lucidity_service_account.ci.id
+  name               = "github-actions"
+}
+```
+
+Then point the pipeline's provider at the credential (`client_id` plus
+`client_secret_file`/`client_secret_command`, or `LUCIDITY_CLIENT_ID` /
+`LUCIDITY_CLIENT_SECRET`).
+
+**Worth knowing:**
+
+- **Run it with an admin's refresh token.** Only account admins can create
+  or change service accounts; a service account's own credentials can only
+  read, so they get a 403 (the error says so).
+- **The secret is in Terraform state** (marked sensitive). Encrypt your
+  state, and send the secret straight to a secrets manager (see the
+  credential's Registry example) rather than outputting it.
+- **Expiry is rotation.** A credential expires after 90 days unless
+  `expires_at` says otherwise. When it expires, or is revoked in the
+  dashboard, the next refresh removes it and the next apply creates a new
+  one, with a new secret; anything fed `client_secret` in the same
+  configuration follows along.
+- **Deleting a service account is permanent.** Its credentials stop working
+  and its name can never be reused. To pause one, set `enabled = false`.
+- **`permissions` is the complete set.** A tenant left out has no access;
+  leaving `permissions` unset means no tenant roles (removing it switches
+  the role mapping off: Lucidity keeps the roles, but they grant nothing). Role names match
+  ignoring case (`viewer` = `Viewer`), so case alone never shows a diff.
+
+### API documentation notes (service accounts)
+
+Source: [docs/api/revamp/service-accounts/Service Accounts API.pdf](docs/api/revamp/service-accounts/Service%20Accounts%20API.pdf)
+(`/v1/service-accounts`).
+
+| Topic | API docs | This provider |
+|---|---|---|
+| Name taken (create or rename) | Returns `500`, not a 4xx | Checked before the call; the error names the existing service account's ID and the import command |
+| Create after a 5xx | A `500` can also mean a reserved name (deleted account) or a caller outside the account | Not retried. If the name didn't exist before and does now, it's adopted with a warning; otherwise the error lists those causes |
+| Name and description limits | 255 and 1000 characters | Checked at plan time |
+| Credential secret | Shown once, on create | Kept in state from create; empty after import |
+| Credential on a disabled service account, or an expiry in the past | Returns `500` | Both checked before the call, with a clear error |
+| Credential create after a 5xx | Not described | Not retried (the secret would be lost); the error lists active credentials with that name to revoke |
+| Reading one credential | No get-one endpoint | Found in the service account's list |
+| `enabled` in the permissions `PUT` | The role mapping's own switch (`false` keeps the roles but they don't apply), separate from the service account's `enabled` | Sends `true` when setting roles. Removing `permissions` sends the current roles with `false` instead of an empty map (which may be rejected). A mapping switched off reads as no roles; if that happened outside Terraform, with a warning |
+| Tenant IDs in `tenantRoleMap` | "Tenant IDs from your account" | Takes `lucidity_tenant.<name>.tenant_id` (to be confirmed live) |
+| `X-tenant` header | Step 5: "call APIs with Bearer and `X-tenant`"; the value is a tenant ID | Sent from `tenant_id` (provider default, overridable per resource and data source); not sent when unset |
+| Base URL | `https://api.lucidity.dev`; every endpoint is also served at `/external/api/v1/service-accounts/...` | Unchanged deployment table (the auth docs use `dash-back.lucidity.dev`) |
 
 ## Future planned improvements
 

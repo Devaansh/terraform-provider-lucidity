@@ -40,6 +40,10 @@ provider "lucidity" {
   client_id             = "svc-abc123"
   client_secret_command = "aws secretsmanager get-secret-value --secret-id lucidity/client-secret --query SecretString --output text"
   # or LUCIDITY_CLIENT_ID + LUCIDITY_CLIENT_SECRET in the environment
+
+  # The Lucidity tenant to act on, sent as X-tenant. Service accounts hold
+  # roles per tenant; any resource or data source can override this.
+  tenant_id = "lucidity-prod"
 }
 ```
 
@@ -62,3 +66,4 @@ provider "lucidity" {
 - `refresh_token` (String, Sensitive) Long-lived Lucidity refresh token for a user, supplied directly (format <accessKey>.<secretKey>, generated in the dashboard). Discouraged: the value ends up in your .tf config or, if fed from a data source, in Terraform state. Prefer refresh_token_file, refresh_token_command, or the LUCIDITY_REFRESH_TOKEN environment variable. At most one of refresh_token, refresh_token_file, or refresh_token_command may be set, and not together with service account credentials (client_id / client_secret*).
 - `refresh_token_command` (String) Shell command whose trimmed stdout is used as the Lucidity refresh token, e.g. `vault kv get -field=token secret/lucidity`. Runs via the platform shell with a 30s timeout; stdout is never logged, including at TF_LOG=DEBUG. At most one of refresh_token, refresh_token_file, or refresh_token_command may be set.
 - `refresh_token_file` (String) Path to a local file containing only the Lucidity refresh token; its contents are trimmed of surrounding whitespace. Never sent anywhere but read into memory. At most one of refresh_token, refresh_token_file, or refresh_token_command may be set.
+- `tenant_id` (String) Default Lucidity tenant ID (e.g. lucidity_tenant.<name>.tenant_id) for API calls, sent as the X-tenant header. Each resource and data source (except lucidity_tenant) can override it with its own tenant_id. Unset: no X-tenant header is sent, as before. Needed when authenticating as a service account, whose roles are per tenant.

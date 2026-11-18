@@ -158,6 +158,7 @@ type Client struct {
 
 	retryBaseDelay      time.Duration // overridable in tests to avoid slow sleeps
 	proactiveRefreshAge time.Duration
+	defaultTenant       string // X-tenant when the call's context names none
 
 	// DebugLog, if set, receives non-secret call metadata (method, path,
 	// status, requestId) after every attempt. Client never passes token or
@@ -368,6 +369,9 @@ func (c *Client) doOnce(ctx context.Context, method, path string, bodyBytes []by
 	req.Header.Set(headerAuthType, authTypeValue)
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Content-Type", "application/json")
+	if tenant := c.tenantFor(ctx); tenant != "" {
+		req.Header.Set(headerTenant, tenant)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

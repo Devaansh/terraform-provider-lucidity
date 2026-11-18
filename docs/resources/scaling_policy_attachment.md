@@ -45,6 +45,10 @@ resource "lucidity_scaling_policy_attachment" "azure_vm" {
 - `instance_identifier` (Attributes) The instance to attach the policy to. (see [below for nested schema](#nestedatt--instance_identifier))
 - `policy_id` (String) ID of the scaling policy to attach (lucidity_scaling_policy.<name>.id).
 
+### Optional
+
+- `tenant_id` (String) Lucidity tenant ID (e.g. lucidity_tenant.<name>.tenant_id) to act on, sent as the X-tenant header. Overrides the provider's tenant_id; leave unset to use it. Needed when authenticating as a service account with roles on several tenants.
+
 ### Read-Only
 
 - `id` (String) "<policy_id>/<cloud_provider>/<cloud_provider_account_id>/<instance_id>" (with "/<resource_group>" before the instance ID for Azure). Also the import ID.

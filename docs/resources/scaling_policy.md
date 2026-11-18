@@ -37,6 +37,10 @@ resource "lucidity_scaling_policy" "db" {
 - `min_disk_sku_size` (Number) Minimum disk SKU size.
 - `name` (String) Policy name. Must be unique within the Lucidity account.
 
+### Optional
+
+- `tenant_id` (String) Lucidity tenant ID (e.g. lucidity_tenant.<name>.tenant_id) to act on, sent as the X-tenant header. Overrides the provider's tenant_id; leave unset to use it. Needed when authenticating as a service account with roles on several tenants.
+
 ### Read-Only
 
 - `attached_instance_count` (Number) How many instances the policy is attached to. Lucidity reports only the count, not which instances.

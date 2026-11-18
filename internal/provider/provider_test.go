@@ -36,6 +36,7 @@ func providerConfigType() tftypes.Object {
 			"max_parallel_requests":            tftypes.Number,
 			"proactive_refresh_buffer_minutes": tftypes.Number,
 			"lucidity_dashboard_account_name":  tftypes.String,
+			"tenant_id":                        tftypes.String,
 		},
 	}
 }

@@ -47,6 +47,7 @@ type scalingPolicyAttachmentModel struct {
 	ID                 types.String         `tfsdk:"id"`
 	PolicyID           types.String         `tfsdk:"policy_id"`
 	InstanceIdentifier *policyInstanceModel `tfsdk:"instance_identifier"`
+	TenantID           types.String         `tfsdk:"tenant_id"`
 }
 
 func (r *scalingPolicyAttachmentResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -86,6 +87,7 @@ func (r *scalingPolicyAttachmentResource) Schema(_ context.Context, _ resource.S
 				Description:   "ID of the scaling policy to attach (lucidity_scaling_policy.<name>.id).",
 				PlanModifiers: replace,
 			},
+			"tenant_id": tenantIDResourceAttribute(),
 			"instance_identifier": schema.SingleNestedAttribute{
 				Required:    true,
 				Description: "The instance to attach the policy to.",
@@ -196,6 +198,7 @@ func (r *scalingPolicyAttachmentResource) ImportState(ctx context.Context, req r
 		return
 	}
 	m := scalingPolicyAttachmentModel{
+		TenantID: types.StringNull(),
 		PolicyID: types.StringValue(parts[0]),
 		InstanceIdentifier: &policyInstanceModel{
 			CloudProvider:          types.StringValue(parts[1]),
@@ -217,6 +220,7 @@ func (r *scalingPolicyAttachmentResource) Create(ctx context.Context, req resour
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	ctx = withTenant(ctx, plan.TenantID)
 	policyID, err := parsePolicyID(plan.PolicyID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid policy_id", err.Error())
@@ -240,6 +244,7 @@ func (r *scalingPolicyAttachmentResource) Read(ctx context.Context, req resource
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	ctx = withTenant(ctx, state.TenantID)
 	policyID, err := parsePolicyID(state.PolicyID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid policy_id in state", err.Error())
@@ -288,6 +293,7 @@ func (r *scalingPolicyAttachmentResource) Delete(ctx context.Context, req resour
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	ctx = withTenant(ctx, state.TenantID)
 	policyID, err := parsePolicyID(state.PolicyID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid policy_id in state", err.Error())

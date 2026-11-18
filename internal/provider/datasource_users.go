@@ -29,6 +29,8 @@ type usersDataSourceModel struct {
 	Role   types.String `tfsdk:"role"`
 	Status types.String `tfsdk:"status"`
 	Users  []userModel  `tfsdk:"users"`
+	// TenantID is sent as X-tenant (see tenant_id.go).
+	TenantID types.String `tfsdk:"tenant_id"`
 }
 
 type userModel struct {
@@ -68,9 +70,10 @@ func (d *usersDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 	resp.Schema = schema.Schema{
 		Description: "Lists the users on the caller's Lucidity account, optionally filtered. Lucidity staff accounts are not listed.",
 		Attributes: map[string]schema.Attribute{
-			"email":  schema.StringAttribute{Optional: true, Description: "Only users whose email contains this text (case-insensitive)."},
-			"role":   schema.StringAttribute{Optional: true, Description: "Only users holding this role on any cloud account."},
-			"status": schema.StringAttribute{Optional: true, Description: "Only users with this status, e.g. `ACTIVE` or `DISABLED`. If not set, removed users are included as `DISABLED`."},
+			"tenant_id": tenantIDDataSourceAttribute(),
+			"email":     schema.StringAttribute{Optional: true, Description: "Only users whose email contains this text (case-insensitive)."},
+			"role":      schema.StringAttribute{Optional: true, Description: "Only users holding this role on any cloud account."},
+			"status":    schema.StringAttribute{Optional: true, Description: "Only users with this status, e.g. `ACTIVE` or `DISABLED`. If not set, removed users are included as `DISABLED`."},
 			"users": schema.ListNestedAttribute{
 				Computed:    true,
 				Description: "The matching users.",
@@ -104,7 +107,7 @@ func (d *usersDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	users, err := d.client.ListUsers(ctx, client.UserFilter{
+	users, err := d.client.ListUsers(withTenant(ctx, state.TenantID), client.UserFilter{
 		Email:  state.Email.ValueString(),
 		Role:   state.Role.ValueString(),
 		Status: state.Status.ValueString(),

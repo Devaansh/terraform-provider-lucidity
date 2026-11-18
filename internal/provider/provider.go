@@ -49,6 +49,7 @@ type lucidityProviderModel struct {
 	MaxParallelRequests          types.Int64  `tfsdk:"max_parallel_requests"`
 	ProactiveRefreshBufferMins   types.Int64  `tfsdk:"proactive_refresh_buffer_minutes"`
 	LucidityDashboardAccountName types.String `tfsdk:"lucidity_dashboard_account_name"`
+	TenantID                     types.String `tfsdk:"tenant_id"`
 }
 
 // LucidityClients bundles the API client made available to resources and
@@ -118,6 +119,13 @@ func (p *LucidityProvider) Schema(_ context.Context, _ provider.SchemaRequest, r
 				Validators: []validator.Int64{
 					int64validator.AtLeast(1),
 				},
+			},
+			"tenant_id": schema.StringAttribute{
+				Optional: true,
+				Description: "Default Lucidity tenant ID (e.g. lucidity_tenant.<name>.tenant_id) for API calls, sent as the X-tenant header. " +
+					"Each resource and data source (except lucidity_tenant) can override it with its own tenant_id. Unset: no X-tenant header is sent, as before. " +
+					"Needed when authenticating as a service account, whose roles are per tenant.",
+				Validators: []validator.String{stringvalidator.LengthAtLeast(1)},
 			},
 			"proactive_refresh_buffer_minutes": schema.Int64Attribute{
 				Optional: true,
@@ -212,6 +220,7 @@ func (p *LucidityProvider) Configure(ctx context.Context, req provider.Configure
 	apiClient := client.NewClient(baseURL, credentials,
 		client.WithMaxParallelRequests(maxParallel),
 		client.WithProactiveRefreshAge(proactiveRefreshAge),
+		client.WithDefaultTenant(data.TenantID.ValueString()),
 	)
 	apiClient.DebugLog = func(ctx context.Context, msg string, fields map[string]any) {
 		tflog.Debug(ctx, msg, fields)
@@ -227,6 +236,8 @@ func (p *LucidityProvider) Resources(_ context.Context) []func() resource.Resour
 		newTenantResource,
 		newScalingPolicyResource,
 		newScalingPolicyAttachmentResource,
+		newServiceAccountResource,
+		newServiceAccountCredentialResource,
 	}
 }
 
@@ -236,5 +247,6 @@ func (p *LucidityProvider) DataSources(_ context.Context) []func() datasource.Da
 		newScalingPoliciesDataSource,
 		newUsersDataSource,
 		newRolesDataSource,
+		newServiceAccountsDataSource,
 	}
 }

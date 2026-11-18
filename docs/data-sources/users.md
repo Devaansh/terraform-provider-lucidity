@@ -36,6 +36,7 @@ output "admin_emails" {
 - `email` (String) Only users whose email contains this text (case-insensitive).
 - `role` (String) Only users holding this role on any cloud account.
 - `status` (String) Only users with this status, e.g. `ACTIVE` or `DISABLED`. If not set, removed users are included as `DISABLED`.
+- `tenant_id` (String) Lucidity tenant ID (e.g. lucidity_tenant.<name>.tenant_id) to act on, sent as the X-tenant header. Overrides the provider's tenant_id; leave unset to use it. Needed when authenticating as a service account with roles on several tenants.
 
 ### Read-Only
 

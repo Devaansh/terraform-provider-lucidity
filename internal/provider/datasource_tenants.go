@@ -6,6 +6,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/Devaansh/terraform-provider-lucidity/internal/client"
@@ -25,7 +26,8 @@ type tenantsDataSource struct {
 }
 
 type tenantsDataSourceModel struct {
-	Tenants []tenantDataSourceModel `tfsdk:"tenants"`
+	TenantID types.String            `tfsdk:"tenant_id"`
+	Tenants  []tenantDataSourceModel `tfsdk:"tenants"`
 }
 
 type tenantDataSourceModel struct {
@@ -60,6 +62,7 @@ func (d *tenantsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest
 	resp.Schema = schema.Schema{
 		Description: "Lists every tenant (onboarded cloud account) under the caller's Lucidity account, ACTIVE first then INACTIVE. Enables a \"desired vs actual\" comparison against your lucidity_tenant resources.",
 		Attributes: map[string]schema.Attribute{
+			"tenant_id": tenantIDDataSourceAttribute(),
 			"tenants": schema.ListNestedAttribute{
 				Computed:    true,
 				Description: "Every tenant under the account, ACTIVE first then INACTIVE.",
@@ -96,14 +99,19 @@ func (d *tenantsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest
 	}
 }
 
-func (d *tenantsDataSource) Read(ctx context.Context, _ datasource.ReadRequest, resp *datasource.ReadResponse) {
-	tenants, err := d.client.ListTenants(ctx)
+func (d *tenantsDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var tenantID types.String
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("tenant_id"), &tenantID)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	tenants, err := d.client.ListTenants(withTenant(ctx, tenantID))
 	if err != nil {
 		resp.Diagnostics.AddError("Unable to list Lucidity tenants", err.Error())
 		return
 	}
 
-	var state tenantsDataSourceModel
+	state := tenantsDataSourceModel{TenantID: tenantID}
 	state.Tenants = make([]tenantDataSourceModel, 0, len(tenants))
 	for _, t := range tenants {
 		state.Tenants = append(state.Tenants, tenantDataSourceModel{
